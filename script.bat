@@ -1,4 +1,6 @@
 @echo off
+echo Hook rodou em %date% %time% >> %USERPROFILE%\Desktop\log-hook.txt
+
 cls
 echo === FAZENDO DEPLOY ===
 
