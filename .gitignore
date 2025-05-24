@@ -1,0 +1,70 @@
+# Compilação
+target/*
+*.class
+/prompt_joana.txt
+
+# Build tools
+*.jar
+*.war
+*.ear
+
+# IDEs
+.idea/
+idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Logs
+*.log
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Ambientes
+.env
+.env.*
+*.properties
+
+# Arquivos temporários
+*.tmp
+*.bak
+*.swp
+
+# Arquivos de execução local
+*.local
+*.launch
+*.log
+*.pid
+
+# IntelliJ e cache
+out/
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Arquivos de prompt e recursos locais
+*.ogg
+temp-audio.*
+
+# Venom / Node.js
+node_modules/
+package-lock.json
+dist/
+build/
+
+# Segurança
+openai.key
+
+# Ignorar pasta de tokens sensíveis
+src/main/javascript/tokens/
+tokens/
+
+HELP.md
+mvnw
+mvnw.cmd
+.mvn
+.gitattributes
