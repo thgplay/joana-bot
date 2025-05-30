@@ -1,54 +1,26 @@
 package br.com.gabriel.bot.model;
 
-import lombok.Data;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
-
+import jakarta.persistence.*;
 import java.util.ArrayList;
 import java.util.List;
 
-@Document("chat_history")
+@Entity
+@Table(name = "chat_history")
 public class ChatHistory {
 
     @Id
-    private String id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(unique = true)
+    private String userId;
 
     private String nome;
 
-    private String userId;
+    @ElementCollection
+    @CollectionTable(name = "chat_messages", joinColumns = @JoinColumn(name = "chat_id"))
+    @Column(name = "message")
     private List<String> history = new ArrayList<>();
 
     // Getters e Setters
-
-    public String getId() {
-        return id;
-    }
-
-    public void setId(String id) {
-        this.id = id;
-    }
-
-    public String getUserId() {
-        return userId;
-    }
-
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
-
-    public List<String> getHistory() {
-        return history;
-    }
-
-    public void setHistory(List<String> history) {
-        this.history = history;
-    }
-
-    public String getNome() {
-        return nome;
-    }
-
-    public void setNome(String nome) {
-        this.nome = nome;
-    }
 }
