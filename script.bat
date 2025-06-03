@@ -7,8 +7,12 @@ echo === FAZENDO DEPLOY ===
 :: SPRING BOOT
 git pull origin main
 
-echo === ENCERRANDO ANTIGO SPRING ===
-for /f "tokens=2" %%a in ('tasklist ^| findstr java') do taskkill /PID %%a /F
+echo === ENCERRANDO ANTIGA INSTÂNCIA DO JOANA ===
+for /f "tokens=1" %%a in ('wmic process where "CommandLine like '%%java%%joana%%.jar%%'" get ProcessId ^| findstr /r "[0-9]"') do (
+    echo Matando PID %%a
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 
 echo === COMPILANDO SPRING ===
 call mvnw clean install -DskipTests
