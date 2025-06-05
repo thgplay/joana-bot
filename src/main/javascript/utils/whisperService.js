@@ -1,39 +1,34 @@
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const FormData = require('form-data');
+const { v4: uuid } = require('uuid');
 
-const WHISPER_API_KEY = process.env.OPENAI_API_KEY;
-const WHISPER_API_URL = process.env.OPENAI_API_URL;
-
-
+require('dotenv').config();
 
 async function transcribeAudio(buffer) {
-    const id = Date.now() + '-' + Math.random().toString(36).substring(2, 10);
-    const tempPath = path.join(__dirname, '..', `temp-${id}.ogg`);
+    const filename = `temp-${uuid()}.ogg`;
+    const filepath = path.join(__dirname, filename);
+
+    fs.writeFileSync(filepath, buffer);
+
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filepath));
+    form.append('model', 'whisper-1');
 
     try {
-        await fs.promises.writeFile(tempPath, buffer);
-
-        const form = new FormData();
-        form.append('file', fs.createReadStream(tempPath));
-        form.append('model', 'whisper-1');
-
-        const response = await axios.post(WHISPER_API_URL, form, {
+        const response = await axios.post(process.env.OPENAI_API_URL, form, {
             headers: {
                 ...form.getHeaders(),
-                Authorization: `Bearer ${WHISPER_API_KEY}`
+                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
             }
         });
-
         return response.data.text;
     } catch (err) {
-        console.error('❌ Erro na transcrição do áudio:', err.message);
-        return null;
+        console.error("Erro na transcrição:", err.response?.data || err.message);
+        return '';
     } finally {
-        if (fs.existsSync(tempPath)) {
-            await fs.promises.unlink(tempPath).catch(() => {});
-        }
+        fs.unlinkSync(filepath);
     }
 }
 

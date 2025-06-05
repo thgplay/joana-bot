@@ -1,79 +1,63 @@
 const axios = require('axios');
 const { transcribeAudio } = require('../utils/whisperService');
-const PQueue = require('p-queue');
+const PQueue = require('p-queue').default;
+
+require('dotenv').config();
 
 const userQueues = new Map();
 const DELAY_BETWEEN_MESSAGES = 3000;
-
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WEBHOOK_TIMEOUT = 5000;
 
 function getQueue(userId) {
     if (!userQueues.has(userId)) {
-        const queue = new PQueue({ concurrency: 1 });
-        userQueues.set(userId, queue);
+        userQueues.set(userId, new PQueue({ concurrency: 1 }));
     }
     return userQueues.get(userId);
 }
 
 async function handleIncomingMessage(client, message) {
-    const from = message?.from;
-    if (!from) {
-        console.warn('⚠️ Mensagem sem identificador de usuário:', message);
-        return;
-    }
-
-    console.log(`📨 Nova mensagem recebida de ${from}`);
-    console.log('📦 Conteúdo da mensagem:', {
-        type: message.type,
-        mimetype: message.mimetype,
-        body: message.body,
-    });
+    const from = message?.key?.remoteJid;
+    if (!from) return;
 
     const queue = getQueue(from);
-
     queue.add(() => processMessage(client, message))
         .then(() => new Promise(res => setTimeout(res, DELAY_BETWEEN_MESSAGES)))
         .catch(err => console.error(`❌ Erro na fila de ${from}:`, err));
 }
 
 async function processMessage(client, message) {
-    const from = message.from;
+    const from = message.key.remoteJid;
+    const content = message.message;
 
-    switch (message.type) {
-        case 'chat':
-            console.error(`💬 [${from}] Mensagem de texto: "${message.body}"`);
-            print(`test`)
-            return await handleText(client, from, message.body);
+    const type = Object.keys(content)[0];
+    const msgContent = content[type];
 
-        case 'audio':
-            if (message.mimetype === 'audio/ogg; codecs=opus') {
-                console.log(`🎧 [${from}] Mensagem de áudio recebida`);
-                try {
-                    const buffer = await client.decryptFile(message);
-                    const text = await transcribeAudio(buffer);
-                    console.log(`📝 [${from}] Áudio transcrito: "${text}"`);
-                    if (!text || text.trim() === '') {
-                        console.log(`⚠️ [${from}] Transcrição vazia. Enviando resposta de erro.`);
-                        return await client.sendText(from, "Que pena! 🥺 Não consegui entender o que você está falando, poderia falar novamente?");
-                    }
-                    return await handleText(client, from, text);
-                } catch (err) {
-                    console.error(`❌ [${from}] Erro ao transcrever o áudio:`, err.message);
-                    return await client.sendText(from, "Que pena! 🥺 Não consegui entender o que você está falando, poderia falar novamente?");
-                }
-            }
-            break;
-
-        default:
-            console.log(`📎 [${from}] Tipo de mensagem não compreendido (${message.type || message.mimetype})`);
-            return await client.sendText(from, "Que pena! 🥺 Não consegui entender o que você está falando, poderia falar novamente?");
+    if (type === 'conversation' || type === 'extendedTextMessage') {
+        const text = msgContent.text || msgContent || '';
+        return await handleText(client, from, text);
     }
+
+    if (type === 'audioMessage') {
+        try {
+            const buffer = await client.decryptMediaMessage(message);
+            const text = await transcribeAudio(buffer);
+            if (!text || text.trim() === '') {
+                return await client.sendMessage(from, { text: "Não consegui entender. Pode repetir? 🥺" });
+            }
+            return await handleText(client, from, text);
+        } catch (err) {
+            console.error(`❌ Erro ao transcrever áudio:`, err);
+            return await client.sendMessage(from, { text: "Erro ao entender o áudio. Pode repetir? 🥺" });
+        }
+    }
+
+    return await client.sendMessage(from, { text: "Desculpe, não entendi sua mensagem 😅" });
 }
 
 async function handleText(client, from, text) {
     try {
-        console.log(`📤 [${from}] Enviando mensagem para webhook: "${text}"`);
+        console.log(`📤 Enviando para webhook: "${text}"`);
 
         const response = await axios.post(WEBHOOK_URL, {
             text,
@@ -81,29 +65,12 @@ async function handleText(client, from, text) {
         }, { timeout: WEBHOOK_TIMEOUT });
 
         const reply = response.data?.reply;
+        if (!reply || reply.trim() === '') return;
 
-        if (!reply || reply.trim() === '') {
-            console.log(`⚠️ [${from}] Resposta da IA vazia. Nenhuma mensagem enviada.`);
-            return;
-        }
-
-        console.log(`📬 [${from}] Resposta gerada pela IA: "${reply}"`);
-        await client.sendText(from, reply);
+        await client.sendMessage(from, { text: reply });
     } catch (err) {
-        if (err?.response?.status === 204) {
-            console.log(`⚠️ [${from}] Resposta 204 (sem conteúdo). Nenhuma mensagem enviada.`);
-            return;
-        }
-
-
-
-        console.error(`❌ [${from}] Erro ao comunicar com o webhook:`, {
-            status: err?.response?.status,
-            statusText: err?.response?.statusText,
-            data: err?.response?.data,
-            message: err?.message,
-            stack: err?.stack
-        });
+        console.error('❌ Erro ao comunicar com o webhook:', err.message);
+        await client.sendMessage(from, { text: "Erro ao processar sua mensagem. Tente novamente mais tarde!" });
     }
 }
 
