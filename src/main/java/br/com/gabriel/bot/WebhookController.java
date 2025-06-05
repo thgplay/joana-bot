@@ -78,7 +78,7 @@ public class WebhookController {
         }
 
         // Verificar se já existe histórico no MongoDB
-        Optional<ChatHistory> optionalHistory = historyRepository.findByUserId(sender);
+        Optional<ChatHistory> optionalHistory = historyRepository.findByUserIdWithHistory(sender);
         if (optionalHistory.isEmpty()) {
             System.out.println("🛑 Primeira mensagem detectada. Salvando histórico mas não respondendo.");
 
