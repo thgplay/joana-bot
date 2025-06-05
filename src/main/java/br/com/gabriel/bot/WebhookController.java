@@ -44,6 +44,7 @@ public class WebhookController {
 
         String message = payload.get("text");
         String sender = payload.get("from");
+
         
 
         if (sender == null || sender.isBlank()) {
