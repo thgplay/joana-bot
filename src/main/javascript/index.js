@@ -89,7 +89,7 @@ async function startBot() {
 }
 
 function startApi() {
-  app.post('/enviar-mensagem', async (req, res) => {
+  app.post('/api/enviar-mensagem', async (req, res) => {
     const { from, text } = req.body;
 
     if (!sock || !from || !text) {
@@ -107,7 +107,7 @@ function startApi() {
   });
 
   app.listen(3000, () => {
-    console.log('🚀 API externa ativa: http://localhost:3000/enviar-mensagem');
+    console.log('🚀 API externa ativa: http://localhost:3000/api/enviar-mensagem');
   });
 }
 
