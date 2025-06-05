@@ -162,7 +162,7 @@ public class WebhookController {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:3000/enviar-mensagem")) // ✅ ROTA NOVA
+                    .uri(URI.create("http://localhost:3000/api/enviar-mensagem")) // ✅ ROTA NOVA
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(payload)))
                     .build();
