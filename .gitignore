@@ -52,6 +52,7 @@ temp-audio.*
 
 # Venom / Node.js
 node_modules/
+auth_info/
 package-lock.json
 dist/
 build/
