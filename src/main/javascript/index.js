@@ -3,7 +3,7 @@ const makeWASocket = require('@whiskeysockets/baileys').default;
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
-const { handleIncomingMessage } = require('./messageService');
+const { handleIncomingMessage } = require('./services/messageService');
 
 const app = express();
 app.use(express.json());
