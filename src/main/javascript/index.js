@@ -13,11 +13,13 @@ let sock = null;
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
   const { version, isLatest } = await fetchLatestBaileysVersion();
-  console.log(`Usando versão do WhatsApp: ${version}, mais recente? ${isLatest}`);
+  console.log(`🟢 Usando versão do WhatsApp: ${version}, mais recente? ${isLatest}`);
 
   sock = makeWASocket({
     auth: state,
-    version
+    version,
+    printQRInTerminal: false,
+    getMessage: async () => ({ conversation: 'fallback' })
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -40,23 +42,23 @@ async function startBot() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    console.log(`📨 Evento 'messages.upsert': tipo=${type}, quantidade=${messages?.length}`);
     if (type !== 'notify') return;
-    const msg = messages[0];
 
-    if (!msg.message) return;
+    const msg = messages[0];
+    if (!msg || !msg.message || msg.key.fromMe) return;
 
     const from = msg.key.remoteJid;
     const messageType = Object.keys(msg.message)[0];
 
-    let messageObj = {
+    console.log(`📥 Mensagem recebida de ${from} - tipo: ${messageType}`);
+
+    const messageObj = {
       from,
       type: messageType,
       body: '',
       mimetype: msg.message?.audioMessage?.mimetype,
-      decryptFile: async () => {
-        const stream = await sock.downloadMediaMessage(msg);
-        return stream;
-      }
+      decryptFile: async () => await sock.downloadMediaMessage(msg)
     };
 
     if (messageType === 'conversation') {
@@ -69,7 +71,11 @@ async function startBot() {
       messageObj.type = 'audio';
     }
 
-    await handleIncomingMessage(sock, messageObj);
+    try {
+      await handleIncomingMessage(sock, messageObj);
+    } catch (err) {
+      console.error('❌ Erro ao processar mensagem:', err);
+    }
   });
 
   startApi();
