@@ -45,8 +45,6 @@ public class WebhookController {
         String message = payload.get("text");
         String sender = payload.get("from");
 
-        
-
         if (sender == null || sender.isBlank()) {
             System.out.println("❌ Erro: Payload sem campo 'from'. Ignorando.");
             return CompletableFuture.completedFuture(
@@ -77,24 +75,14 @@ public class WebhookController {
             delayControlMap.put(sender, agora);
         }
 
-        // Verificar se já existe histórico no MongoDB
-        Optional<ChatHistory> optionalHistory = historyRepository.findByUserIdWithHistory(sender);
-        if (optionalHistory.isEmpty()) {
-            System.out.println("🛑 Primeira mensagem detectada. Salvando histórico mas não respondendo.");
-
+        // Obter ou criar histórico
+        ChatHistory history = historyRepository.findByUserIdWithHistory(sender).orElseGet(() -> {
             ChatHistory novo = new ChatHistory();
             novo.setUserId(sender);
-            novo.getHistory().add("Usuário: " + message);
-            historyRepository.save(novo);
+            return novo;
+        });
 
-            return CompletableFuture.completedFuture(
-                    ResponseEntity.ok(Map.of("reply", "")) // resposta vazia = não enviar
-            );
-        }
-
-        // Caso já tenha histórico, seguir fluxo normal
-        ChatHistory history = optionalHistory.get();
-
+        // Detectar nome se possível
         String nomeDetectado = extrairNome(message);
         if (nomeDetectado != null && !nomeDetectado.isBlank()) {
             System.out.println("🙋 Nome detectado: " + nomeDetectado);
@@ -132,6 +120,7 @@ public class WebhookController {
                     return ResponseEntity.status(500).body(Map.of("reply", "❌ Erro ao gerar resposta da IA."));
                 });
     }
+
 
     private String extrairNome(String message) {
         String[] padroes = {
