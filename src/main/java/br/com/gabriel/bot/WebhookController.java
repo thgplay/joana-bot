@@ -162,7 +162,7 @@ public class WebhookController {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:3000/enviar-mensagem"))
+                    .uri(URI.create("http://localhost:3000/api/enviar-mensagem")) // ✅ ROTA NOVA
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(payload)))
                     .build();
@@ -177,10 +177,17 @@ public class WebhookController {
     }
 
 
+
     @PostMapping("/disparar-para-todos")
     public ResponseEntity<String> dispararMensagemParaTodos() {
 
-        List<ChatHistory> todosUsuarios = historyRepository.findAll();
+        List<ChatHistory> todosUsuarios = historyRepository.findAll().stream()
+                .filter(user -> user.getUserId() != null && !user.getUserId().isBlank())
+                .toList();
+
+        if (todosUsuarios.isEmpty()) {
+            return ResponseEntity.ok("⚠️ Nenhum usuário com userId válido.");
+        }
 
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         AtomicInteger index = new AtomicInteger();
@@ -188,27 +195,27 @@ public class WebhookController {
         int intervaloEmSegundos = 5;
 
         String promptBase = """
-            
-            Você é a Joana, uma assistente de receitas simpática e criativa. Gere uma mensagem acolhedora e variada para convidar o usuário a preparar uma receita hoje.
+        Você é a Joana, uma assistente de receitas simpática e criativa. Gere uma mensagem acolhedora e variada para convidar o usuário a preparar uma receita hoje.
 
-            🟢 REGRAS FIXAS:
-            - Todas as mensagens devem começar com "Oiie!"
-            - Sempre inclua "aqui é a Joana" logo no início da mensagem
+        🟢 REGRAS FIXAS:
+        - Todas as mensagens devem começar com "Oiie!"
+        - Sempre inclua "aqui é a Joana" logo no início da mensagem
 
-            🎯 OBJETIVO:
-            - Convide o usuário a cozinhar hoje.
-            - Estimule a conversa perguntando quais ingredientes ele tem ou se quer sugestões.
-            - As mensagens devem parecer escritas por uma pessoa real.
+        🎯 OBJETIVO:
+        - Convide o usuário a cozinhar hoje.
+        - Estimule a conversa perguntando quais ingredientes ele tem ou se quer sugestões.
+        - As mensagens devem parecer escritas por uma pessoa real.
 
-            🔁 VARIAÇÃO:
-            - Crie mensagens únicas, sem repetir estruturas ou frases das anteriores.
-            - Use 1 a 3 emojis no corpo do texto, com criatividade e moderação.
-            - Altere o tom entre divertido, acolhedor, curioso, animado e calmo.
-            - Não diga "formato desejável", apenas envie a mensagem final.
-            
-            """;
+        🔁 VARIAÇÃO:
+        - Crie mensagens únicas, sem repetir estruturas ou frases das anteriores.
+        - Use 1 a 3 emojis no corpo do texto, com criatividade e moderação.
+        - Altere o tom entre divertido, acolhedor, curioso, animado e calmo.
+        - Não diga "formato desejável", apenas envie a mensagem final.
+        """;
 
         openAiService.ask("", new ArrayList<>(), promptBase).thenAccept(respostaIA -> {
+            System.out.println("📢 Iniciando disparo para todos...");
+
             scheduler.scheduleAtFixedRate(() -> {
                 int i = index.getAndIncrement();
 
@@ -219,14 +226,21 @@ public class WebhookController {
                 }
 
                 ChatHistory profile = todosUsuarios.get(i);
+                String userId = profile.getUserId();
 
-                enviarMensagem(respostaIA, profile.getUserId());
+                try {
+                    System.out.println("📨 Enviando para: " + userId);
+                    enviarMensagem(respostaIA, userId);
+                } catch (Exception e) {
+                    System.err.println("❌ Falha ao enviar para " + userId + ": " + e.getMessage());
+                }
 
             }, 0, intervaloEmSegundos, TimeUnit.SECONDS);
         });
 
-        return ResponseEntity.ok("🟢 Disparo agendado para todos os usuários.");
+        return ResponseEntity.ok("🟢 Disparo agendado para " + todosUsuarios.size() + " usuários.");
     }
+
 
 
 
