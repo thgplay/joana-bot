@@ -105,6 +105,7 @@ async function startBot() {
     } catch (err) {
       console.error('❌ Erro ao processar mensagem:', err);
     }
+    
   });
 }
 
