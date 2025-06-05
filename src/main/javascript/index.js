@@ -1,6 +1,10 @@
 const express = require('express');
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion
+} = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const { handleIncomingMessage } = require('./services/messageService');
@@ -19,10 +23,11 @@ async function startBot() {
     auth: state,
     version,
     printQRInTerminal: false,
-    getMessage: async () => ({ conversation: 'fallback' })
+    getMessage: async () => ({ conversation: 'fallback' }),
+    browser: ['Joana', 'Ubuntu', '22.04']
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', saveCreds); // ✅ Persistência de autenticação
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -33,7 +38,9 @@ async function startBot() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      const shouldReconnect =
+          new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+
       console.log("🔁 Reconectando...", { shouldReconnect });
       if (shouldReconnect) startBot();
     } else if (connection === 'open') {
