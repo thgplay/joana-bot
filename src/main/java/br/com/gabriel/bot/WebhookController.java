@@ -153,28 +153,35 @@ public class WebhookController {
         return null;
     }
 
+    private static final String BOT_URL = "http://localhost:3000/api/enviar-mensagem"; // mesmo caminho do Node
+
     public void enviarMensagem(String texto, String userId) {
         try {
             Map<String, String> payload = Map.of(
-                    "text", texto,
-                    "from", userId
+                    "from", userId,   // mesma ordem não importa, mas deixei igual ao Node
+                    "text", texto
             );
 
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:3000/api/enviar-mensagem")) // ✅ ROTA NOVA
+                    .uri(URI.create(BOT_URL))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(payload)))
+                    .POST(HttpRequest.BodyPublishers.ofString(
+                            new ObjectMapper().writeValueAsString(payload)))
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            System.out.println("✅ Resposta do bot: " + response.statusCode() + " - " + response.body());
+            HttpResponse<String> response = HttpClient
+                    .newHttpClient()
+                    .send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.printf("✅ Resposta do bot: %d - %s%n",
+                    response.statusCode(), response.body());
 
         } catch (Exception e) {
             System.out.println("❌ Erro ao enviar mensagem para " + userId);
             e.printStackTrace();
         }
     }
+
 
 
 
