@@ -162,7 +162,7 @@ public class WebhookController {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:3000/api/enviar-mensagem")) // ✅ ROTA NOVA
+                    .uri(URI.create("http://localhost:3000/enviar-mensagem")) // ✅ ROTA NOVA
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(payload)))
                     .build();
@@ -191,7 +191,6 @@ public class WebhookController {
 
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         AtomicInteger index = new AtomicInteger();
-
         int intervaloEmSegundos = 5;
 
         String promptBase = """
@@ -240,6 +239,7 @@ public class WebhookController {
 
         return ResponseEntity.ok("🟢 Disparo agendado para " + todosUsuarios.size() + " usuários.");
     }
+
 
 
 
