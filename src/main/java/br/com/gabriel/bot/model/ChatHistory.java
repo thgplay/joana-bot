@@ -19,8 +19,9 @@ public class ChatHistory {
 
     @ElementCollection
     @CollectionTable(name = "chat_messages", joinColumns = @JoinColumn(name = "chat_id"))
-    @Column(name = "message")
+    @Column(name = "message", columnDefinition = "TEXT")
     private List<String> history = new ArrayList<>();
+
 
     // Getters e Setters
 
