@@ -47,6 +47,7 @@ public class WebhookController {
 
         if (sender == null || sender.isBlank()) {
             System.out.println("❌ Erro: Payload sem campo 'from'. Ignorando.");
+            
             return CompletableFuture.completedFuture(
                     ResponseEntity.badRequest().body(Map.of("reply", "❌ Erro: usuário não identificado."))
             );
