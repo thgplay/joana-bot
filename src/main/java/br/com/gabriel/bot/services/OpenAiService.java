@@ -35,6 +35,7 @@ public class OpenAiService {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public CompletableFuture<String> ask(String sender, String nome, List<String> historico, String mensagemFinal) {
+        System.out.println(sender);
         return CompletableFuture.supplyAsync(() -> {
             try {
                 ArrayNode messages = mapper.createArrayNode();
