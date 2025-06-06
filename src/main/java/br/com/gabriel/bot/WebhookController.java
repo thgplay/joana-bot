@@ -99,7 +99,7 @@ public class WebhookController {
 
         System.out.println("📤 Enviando mensagem para OpenAI com os últimos " + last10.size() + " registros...");
 
-        return openAiService.ask(history.getNome(), last10, message)
+        return openAiService.ask(sender, history.getNome(), last10, message)
                 .thenApply(reply -> {
                     System.out.println("📥 Resposta da IA recebida:");
 
@@ -209,7 +209,7 @@ public class WebhookController {
         - Não diga "formato desejável", apenas envie a mensagem final.
         """;
 
-        openAiService.ask("", new ArrayList<>(), promptBase).thenAccept(respostaIA -> {
+        openAiService.ask("", null, new ArrayList<>(), promptBase).thenAccept(respostaIA -> {
             System.out.println("📢 Iniciando disparo para todos...");
 
             scheduler.scheduleAtFixedRate(() -> {

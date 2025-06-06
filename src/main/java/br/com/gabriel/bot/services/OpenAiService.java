@@ -34,7 +34,7 @@ public class OpenAiService {
     // Executor dedicado para chamadas OpenAI
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public CompletableFuture<String> ask(String nome, List<String> historico, String mensagemFinal) {
+    public CompletableFuture<String> ask(String sender, String nome, List<String> historico, String mensagemFinal) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 ArrayNode messages = mapper.createArrayNode();
@@ -42,7 +42,7 @@ public class OpenAiService {
                 // Prompt inicial
                 ObjectNode systemMessage = mapper.createObjectNode();
                 systemMessage.put("role", "system");
-                systemMessage.put("content", gerarPromptBase(nome));
+                systemMessage.put("content", gerarPromptBase(sender, nome));
                 messages.add(systemMessage);
 
                 // Histórico
@@ -112,9 +112,10 @@ public class OpenAiService {
 
 
 
-    private String gerarPromptBase(String nome) {
+    private String gerarPromptBase(String user, String nome) {
+        String path = user.equals("553496431496@s.whatsapp.net") ? "prompt_joana.txt" : "prompt_clara.txt";
         try {
-            String prompt = Files.readString(Path.of("prompt_joana.txt"), StandardCharsets.UTF_8);
+            String prompt = Files.readString(Path.of(path), StandardCharsets.UTF_8);
 
             if (nome != null && !nome.isBlank()) {
                 prompt = "O nome do usuário é " + nome + ".\n\n" + prompt;
@@ -122,7 +123,7 @@ public class OpenAiService {
 
             return prompt;
         } catch (IOException e) {
-            System.err.println("❌ Erro ao carregar prompt_joana.txt: " + e.getMessage());
+            System.err.println("❌ Erro ao carregar " + path + ": " + e.getMessage());
             return "Você é uma assistente virtual de culinária chamada Joana. Ajude com receitas.";
         }
     }
