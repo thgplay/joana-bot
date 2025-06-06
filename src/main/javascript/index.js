@@ -36,7 +36,7 @@ function startApi() {
   });
 
   /* suba a API primeiro — mesmo que o WhatsApp demore a logar  */
-  app.listen(3000, () =>
+  app.listen(3000, '0.0.0.0', () =>
       console.log(`🚀 API externa ativa: http://localhost:3000${API_PATH}`)
   );
 }
@@ -105,7 +105,7 @@ async function startBot() {
     } catch (err) {
       console.error('❌ Erro ao processar mensagem:', err);
     }
-    
+
   });
 }
 
