@@ -2,6 +2,7 @@
 target/*
 *.class
 /prompt_joana.txt
+/prompt_clara.txt
 
 # Build tools
 *.jar
