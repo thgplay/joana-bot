@@ -114,7 +114,7 @@ public class OpenAiService {
 
 
     private String gerarPromptBase(String user, String nome) {
-        String path = user.equals("553496431496@s.whatsapp.net") ? "prompt_joana.txt" : "prompt_clara.txt";
+        String path = user.equals("553496431496@s.whatsapp.net") ? "prompt_clara.txt" : "prompt_joana.txt";
         try {
             String prompt = Files.readString(Path.of(path), StandardCharsets.UTF_8);
 
