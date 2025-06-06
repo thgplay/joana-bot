@@ -31,34 +31,38 @@ async function processMessage(client, message) {
     const from = message.from;
     const { type, body, decryptFile } = message;
 
-    if (type === 'chat') {
-        return await handleText(client, from, body);
-    }
+    message.handled = false;
 
-    if (type === 'audio') {
+    if (type === 'chat') {
+        await handleText(client, from, body, message);
+    } else if (type === 'audio') {
         try {
             const buffer = await decryptFile();
             const text = await transcribeAudio(buffer);
             if (!text || text.trim() === '') {
+                message.handled = true;
                 return await client.sendMessage(from, {
                     text: 'Não consegui entender. Pode repetir? 🥺'
                 });
             }
-            return await handleText(client, from, text);
+            await handleText(client, from, text, message);
         } catch (err) {
             console.error('❌ Erro ao transcrever áudio:', err);
+            message.handled = true;
             return await client.sendMessage(from, {
                 text: 'Erro ao entender o áudio. Pode repetir? 🥺'
             });
         }
     }
 
-    return await client.sendMessage(from, {
-        text: 'Desculpe, não entendi sua mensagem 😅'
-    });
+    if (!message.handled) {
+        return await client.sendMessage(from, {
+            text: 'Desculpe, não entendi sua mensagem 😅'
+        });
+    }
 }
 
-async function handleText(client, from, text) {
+async function handleText(client, from, text, message) {
     try {
         console.log(`📤 Enviando para webhook: "${text}"`);
 
@@ -71,10 +75,12 @@ async function handleText(client, from, text) {
         const reply = response.data?.reply;
         if (!reply || reply.trim() === '') return;
 
-        await client.sendMessage(from, { text: reply });
+        message.handled = true;
+        return await client.sendMessage(from, { text: reply });
     } catch (err) {
         console.error('❌ Erro ao comunicar com o webhook:', err.message);
-        await client.sendMessage(from, {
+        message.handled = true;
+        return await client.sendMessage(from, {
             text: 'Erro ao processar sua mensagem. Tente novamente mais tarde!'
         });
     }
