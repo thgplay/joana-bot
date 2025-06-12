@@ -6,7 +6,6 @@ const {
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
-
 const qrcode = require('qrcode-terminal');
 const { handleIncomingMessage } = require('./services/messageService');
 
