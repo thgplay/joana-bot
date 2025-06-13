@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows)
+name: CI‑CD Joana (self‑hosted Windows + NSSM)
 
 on:
   push:
@@ -9,31 +9,24 @@ jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
 
-    steps:
-      # 0. JDK 21 local
-      - name: Set JAVA_HOME
-        shell: powershell
-        run: |
-          Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
-          Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
+    #################################################################
+    # VARS – torna JDK 21 local visível para Maven / Spring Boot    #
+    #################################################################
+    env:
+      JAVA_HOME: 'C:\Program Files\Java\jdk-21'
+      PATH: 'C:\Program Files\Java\jdk-21\bin;${{ env.PATH }}'
 
-      # 1. Checkout (traz 2 commits)
+    steps:
+      #################################################################
+      # 1.  Checkout (2 commits para diff JS)                         #
+      #################################################################
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2          # <‑‑ evita o erro do HEAD^
+          fetch-depth: 2
 
-      # 2. Mata instâncias antigas
-      - name: Encerrar processos antigos
-        shell: powershell
-        run: |
-          Get-CimInstance Win32_Process |
-            Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'index\.js' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-          Get-CimInstance Win32_Process |
-            Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-
-      # 3. Node + cache
+      #################################################################
+      # 2.  Setup Node 18 + cache npm + cache node_modules            #
+      #################################################################
       - uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -53,36 +46,37 @@ jobs:
         working-directory: src/main/javascript
         run: npm ci --no-audit --no-fund --prefer-offline
 
-      # 3‑b. Build JS só quando há mudanças
-      - name: Build (caso tenha script)
+      - name: Build JS (somente se houver alteração)
         working-directory: src/main/javascript
         shell: powershell
         run: |
-          # verifica se existe commit anterior ao HEAD
           git rev-parse --verify HEAD~1 2>$null
           if ($LASTEXITCODE -eq 0) {
-          git diff --quiet HEAD~1 HEAD -- src/main/javascript
-          $needBuild = ($LASTEXITCODE -ne 0)
+            git diff --quiet HEAD~1 HEAD -- src/main/javascript
+            $needBuild = ($LASTEXITCODE -ne 0)
           } else {
-          Write-Host "Primeiro commit no branch → build forçado"
-          $needBuild = $true
+            # primeiro commit do branch
+            $needBuild = $true
           }
           
           if ($needBuild) {
-          Write-Host "Alterações em JS → executando build"
-          npm run build --if-present
+            Write-Host "Alterações em JS → executando build"
+            npm run build --if-present
           } else {
-          Write-Host "Nenhuma alteracao em JS → pulando build"
+            Write-Host "Nenhuma alteração em JS → pulando build"
           }
 
-
-      # 4. Build Java
+      #################################################################
+      # 3.  Build Java / Maven (usa JDK‑21 local)                     #
+      #################################################################
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
-      # 5. Deploy artefatos
-      - name: Deploy artefatos
+      #################################################################
+      # 4.  Deploy artefatos para C:\Apps\Joana                       #
+      #################################################################
+      - name: Copiar artefatos
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -91,55 +85,38 @@ jobs:
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
           
-          if (-not (Test-Path $nodeDst)) {
           New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
-          }
           
-          # --- copia JAR ---
+          # --- JAR ---
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # --- sincroniza código Node ---
+          # --- Código / bundle Node ---
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
           
           if (Test-Path $distDir) {
-          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           } else {
-          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           }
-          $rc = $LASTEXITCODE
-          
-          # Robocopy: 0–7 = sucesso, >=8 = erro
-          if ($rc -ge 8) {
-          Write-Error "Robocopy falhou (exit $rc)"
-          exit $rc
-          } else {
-          exit 0
-          }
+          if ($rc -ge 8) { exit $rc } else { exit 0 }
 
-
-      # 6. Sobe Node + Spring fora do runner
-      - name: Iniciar Joana Node + Java (via PsExec)
+      #################################################################
+      # 5.  Reinicia serviços NSSM (devem existir previamente)        #
+      #################################################################
+      - name: Reiniciar serviços Joana (NSSM)
         shell: powershell
         run: |
-          $ErrorActionPreference = 'Stop'
+          $nssm = 'C:\Windows\System32\nssm.exe'
           
-          $psexec   = 'C:\Tools\PsExec\PsExec.exe'   # caminho ao PsExec
-          $prodRoot = 'C:\Apps\Joana'
-          $nodeDir  = Join-Path $prodRoot 'js'
+          & $nssm stop  JoanaNode  2>$null
+          & $nssm stop  JoanaJava  2>$null
           
-          # Node — janela Joana Node na sessão do usuário (Session 1)
-          & $psexec -accepteula -d -i 1 ^
-            cmd /k "cd /d `"$nodeDir`" && echo ==== NODE STARTED ==== && node index.js"
+          & $nssm start JoanaNode
+          & $nssm start JoanaJava
           
-          # Java — janela Joana Java
-          & $psexec -d -i 1 ^
-            cmd /k "cd /d `"$prodRoot`" && echo ==== SPRING STARTED ==== && java -jar joana.jar"
-          
-          exit 0
-
-
-
-
+          Write-Host 'Serviços JoanaNode e JoanaJava reiniciados via NSSM.'
