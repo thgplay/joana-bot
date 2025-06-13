@@ -1,8 +1,8 @@
-name: CI‑CD Joana (self‑hosted Windows, sem NSSM)
+name: CI-CD Joana (self-hosted Windows, sem NSSM)
 
 on:
   push:
-    branches: [ "main" ]          # troque se usa master
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -10,11 +10,11 @@ jobs:
     runs-on: [self-hosted, windows, joana]
 
     steps:
-      # ───── 1. Checkout ───────────────────────────────────────────────
+      # 1. Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ───── 2. Matar instâncias antigas (Node + Java) ────────────────
+      # 2. Matar instâncias antigas (Node + Java)
       - name: Encerrar Joana já em execução
         shell: powershell
         run: |
@@ -27,8 +27,8 @@ jobs:
             | Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } `
             | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # ───── 3. Build JAR (Maven) ─────────────────────────────────────
-      - name: Setup JDK 17 + cache Maven
+      # 3. Build JAR (Maven)
+      - name: Setup JDK 17 + cache Maven
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -39,8 +39,8 @@ jobs:
         shell: bash
         run: mvn -B clean package -DskipTests
 
-      # ───── 4. Build Node side ───────────────────────────────────────
-      - name: Setup Node 18 + cache
+      # 4. Build Node side
+      - name: Setup Node 18 + cache
         uses: actions/setup-node@v4
         with:
           node-version: '18'
@@ -57,7 +57,7 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # ───── 5. Copiar artefatos para produção ────────────────────────
+      # 5. Copiar artefatos para produção
       - name: Deploy artefacts
         shell: powershell
         run: |
@@ -67,20 +67,18 @@ jobs:
           
           New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
           
-          # JAR
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter "joana*.jar" | Select-Object -First 1
           if (-not $jar) { Throw "JAR não encontrado." }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # Node artefatos
           $nodeSrc = "$env:GITHUB_WORKSPACE\src\main\javascript"
           if (Test-Path "$nodeSrc\dist") {
               robocopy "$nodeSrc\dist" $nodeDst /MIR /NFL /NDL /NJH /NJS > $null
           } else {
-              robocopy "$nodeSrc"      $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS > $null
+              robocopy "$nodeSrc" $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS > $null
           }
 
-      # ───── 6. Relançar aplicações (detached) ────────────────────────
+      # 6. Relançar aplicações (detached)
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
