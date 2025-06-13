@@ -63,6 +63,7 @@ public class OpenAiService {
                 ObjectNode nova = mapper.createObjectNode();
                 nova.put("role", "user");
                 nova.put("content", mensagemFinal);
+                
                 messages.add(nova);
 
                 // Log de caracteres e estimativa de tokens antes do envio
