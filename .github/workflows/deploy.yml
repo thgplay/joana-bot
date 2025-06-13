@@ -123,12 +123,15 @@ jobs:
               & $nssm set     $name AppDirectory $dir
               & $nssm set     $name Start SERVICE_AUTO_START
             } else {
-              Write-Host "$name já existe → deixando configuração original."
+              Write-Host "$name já existe → mantendo configuração."
             }
           
-            # Garante que esteja iniciado
             sc.exe start $name 2>$null | Out-Null
-            Write-Host "$name em execução."
+            if ($LASTEXITCODE -le 1) {  # 0 = iniciado, 1056 = já rodando
+              Write-Host "$name em execução."
+            } else {
+              throw "Falha ao iniciar $name (código $LASTEXITCODE)."
+            }
           }
           
           $nodeArgs = "`"$appDir\js\index.js`""
@@ -138,4 +141,6 @@ jobs:
           Ensure-Service 'JoanaJava' $jarExe  $javaArgs  $appDir
           
           Write-Host 'Serviços JoanaNode e JoanaJava OK.'
+          exit 0
+
 
