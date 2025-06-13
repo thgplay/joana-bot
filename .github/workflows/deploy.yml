@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows)
+name: CI‑CD Joana (self‑hosted Windows)
 
 on:
   push:
@@ -8,29 +8,28 @@ on:
 jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
+    env:
+      # usa o JDK que já existe no host
+      JAVA_HOME: 'C:\Program Files\Java\jdk-21'
+      PATH: 'C:\Program Files\Java\jdk-21\bin;${{ env.PATH }}'
 
     steps:
       # 1. Checkout
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       # 2. Finaliza instâncias antigas
       - name: Encerrar processos antigos
         shell: powershell
         run: |
-          Write-Host "Matando Node (index.js)…"
           Get-CimInstance Win32_Process |
             Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'index\.js' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-          
-          Write-Host "Matando joana.jar…"
           Get-CimInstance Win32_Process |
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
       # 3. Ambiente Node
-      - name: Setup Node 18
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
 
@@ -42,29 +41,11 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # 4. Instala JDK 17 manualmente
-      - name: Install JDK 17 manually
-        shell: powershell
-        run: |
-          $zipUrl  = "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.15%2B6/OpenJDK17U-jdk_x64_windows_hotspot_17.0.15_6.zip"
-          $tmpZip  = "$env:TEMP\jdk17.zip"
-          $dest    = "C:\Java"
-          
-          Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip
-          New-Item -ItemType Directory -Path $dest -Force | Out-Null
-          
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $dest)
-          
-          $jdkHome = (Get-ChildItem $dest | Where-Object PSIsContainer | Select-Object -First 1).FullName
-          Add-Content $env:GITHUB_ENV "JAVA_HOME=$jdkHome"
-          Add-Content $env:GITHUB_ENV "PATH=$jdkHome\bin;$env:PATH"
-
-      # 5. Build Java/Maven
+      # 4. Build Java/Maven (usa o JDK‑21 já configurado)
       - name: Build joana.jar
         run: mvn -B clean package -DskipTests
 
-      # 6. Deploy artefatos
+      # 5. Deploy artefatos
       - name: Deploy artefatos
         shell: powershell
         run: |
@@ -83,17 +64,12 @@ jobs:
               robocopy "$nodeSrc\dist" $nodeDst /MIR /NFL /NDL /NJH /NJS > $null
           } else {
               robocopy "$nodeSrc" $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS > $null
-          }
 
-      # 7. Relança Node + Java
+      # 6. Relança Node + Java
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
           $prodRoot = "C:\Apps\Joana"
           $nodeDir  = "$prodRoot\js"
-          
-          Write-Host "Iniciando Node (index.js)…"
           Start-Process -FilePath "node.exe" -WorkingDirectory $nodeDir -ArgumentList "index.js" -WindowStyle Hidden
-          
-          Write-Host "Iniciando joana.jar…"
           Start-Process -FilePath "java.exe" -WorkingDirectory $prodRoot -ArgumentList "-jar joana.jar" -WindowStyle Hidden
