@@ -28,21 +28,23 @@ jobs:
             | Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } `
             | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # … cabeçalho inalterado …
-
       # 3. Build lado Node
       - name: Setup Node 18 + cache
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: npm
-          cache-dependency-path: "**/package-lock.json"
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'src/main/javascript/package-lock.json'
 
       - name: Install Node deps
         shell: bash
         working-directory: src/main/javascript
         run: npm ci
 
+      - name: Build (caso tenha script)
+        shell: bash
+        working-directory: src/main/javascript
+        run: npm run build --if-present
 
       # 4. Build lado Java
       - name: Setup JDK 17 + cache Maven
