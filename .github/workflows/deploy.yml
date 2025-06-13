@@ -29,20 +29,19 @@ jobs:
             | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
       # 3. Build lado Node
-      - name: Setup Node 18 + cache
+      - name: Setup Node 18
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'src/main/javascript/package-lock.json'
+          node-version: 18
+          # ↳ se quiser cache, re‑adicione as 2 linhas abaixo
+          # cache: npm
+          # cache-dependency-path: src/main/javascript/package-lock.json
 
       - name: Install Node deps
-        shell: bash
         working-directory: src/main/javascript
         run: npm ci
 
       - name: Build (caso tenha script)
-        shell: bash
         working-directory: src/main/javascript
         run: npm run build --if-present
 
@@ -51,12 +50,12 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
           cache: maven
 
       - name: Build joana.jar
-        shell: bash
         run: mvn -B clean package -DskipTests
+
 
       # 5. Copia artefatos para produção
       - name: Deploy artefatos
