@@ -64,13 +64,6 @@ jobs:
         run: npm run build --if-present
 
       #################################################################
-      # 4. Build Java / Maven                                         #
-      #################################################################
-      - name: Build joana.jar
-        shell: powershell
-        run: mvn -B clean package -DskipTests
-
-      #################################################################
       # 5. Copiar artefatos p/ C:\Apps\Joana                          #
       #################################################################
       - name: Copiar artefatos
@@ -124,6 +117,13 @@ jobs:
           
           # Robocopy: 0‑7 = sucesso
           if ($rc -ge 8) { exit $rc } else { exit 0 }
+
+      #################################################################
+      # 4. Build Java / Maven                                         #
+      #################################################################
+      - name: Build joana.jar
+        shell: powershell
+        run: mvn -B clean package -DskipTests
 
       #################################################################
       # 6. Inicia Node + Spring em janelas interativas                #
