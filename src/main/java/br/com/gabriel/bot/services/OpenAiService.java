@@ -121,6 +121,7 @@ public class OpenAiService {
             if (nome != null && !nome.isBlank()) {
                 prompt = "O nome do usuário é " + nome + ".\n\n" + prompt;
             }
+
             return prompt;
         } catch (IOException e) {
             System.err.println("❌ Erro ao carregar " + path + ": " + e.getMessage());
