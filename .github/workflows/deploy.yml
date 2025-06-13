@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows + NSSM)
+name: CI‑CD Joana (self‑hosted Windows + NSSM)
 
 on:
   push:
@@ -9,23 +9,25 @@ jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
 
-    #################################################################
-    # VARS – torna JDK 21 local visível para Maven / Spring Boot    #
-    #################################################################
-    env:
-      JAVA_HOME: 'C:\Program Files\Java\jdk-21'
-      PATH: 'C:\Program Files\Java\jdk-21\bin;${{ env.PATH }}'
-
     steps:
       #################################################################
-      # 1.  Checkout (2 commits para diff JS)                         #
+      # 0. Expõe JAVA_HOME e adiciona JDK‑21 ao PATH                  #
+      #################################################################
+      - name: Set JAVA_HOME e PATH
+        shell: powershell
+        run: |
+          Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
+          Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
+
+      #################################################################
+      # 1. Checkout (2 commits para diff JS)                          #
       #################################################################
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
       #################################################################
-      # 2.  Setup Node 18 + cache npm + cache node_modules            #
+      # 2. Setup Node 18 + caches                                     #
       #################################################################
       - uses: actions/setup-node@v4
         with:
@@ -46,7 +48,7 @@ jobs:
         working-directory: src/main/javascript
         run: npm ci --no-audit --no-fund --prefer-offline
 
-      - name: Build JS (somente se houver alteração)
+      - name: Build JS (executa só se mudou)
         working-directory: src/main/javascript
         shell: powershell
         run: |
@@ -54,10 +56,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             git diff --quiet HEAD~1 HEAD -- src/main/javascript
             $needBuild = ($LASTEXITCODE -ne 0)
-          } else {
-            # primeiro commit do branch
-            $needBuild = $true
-          }
+          } else { $needBuild = $true }
           
           if ($needBuild) {
             Write-Host "Alterações em JS → executando build"
@@ -67,32 +66,29 @@ jobs:
           }
 
       #################################################################
-      # 3.  Build Java / Maven (usa JDK‑21 local)                     #
+      # 3. Build Java                                                 #
       #################################################################
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
       #################################################################
-      # 4.  Deploy artefatos para C:\Apps\Joana                       #
+      # 4. Deploy artefatos                                           #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          
           $prodRoot = 'C:\Apps\Joana'
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
           
           New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
           
-          # --- JAR ---
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # --- Código / bundle Node ---
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
           
@@ -106,17 +102,14 @@ jobs:
           if ($rc -ge 8) { exit $rc } else { exit 0 }
 
       #################################################################
-      # 5.  Reinicia serviços NSSM (devem existir previamente)        #
+      # 5. Reinicia serviços NSSM                                     #
       #################################################################
       - name: Reiniciar serviços Joana (NSSM)
         shell: powershell
         run: |
           $nssm = 'C:\Windows\System32\nssm.exe'
-          
           & $nssm stop  JoanaNode  2>$null
           & $nssm stop  JoanaJava  2>$null
-          
           & $nssm start JoanaNode
           & $nssm start JoanaJava
-          
-          Write-Host 'Serviços JoanaNode e JoanaJava reiniciados via NSSM.'
+          Write-Host 'Serviços JoanaNode e JoanaJava reiniciados.'
