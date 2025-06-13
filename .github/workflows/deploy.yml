@@ -1,30 +1,33 @@
-# .github/workflows/deploy.yml   (repositório joana‑bot)
-
-name: CI‑CD Joana (self‑hosted Windows)
+name: CI‑CD Joana (self‑hosted Windows, sem NSSM)
 
 on:
   push:
-    branches: [ "main" ]        # troque se usar master
-  workflow_dispatch:            # botão “Run workflow”
+    branches: [ "main" ]          # troque se usa master
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: [self-hosted, windows, joana]
 
     steps:
-      # ───── 1. Checkout ────────────────────────────────────────────────
+      # ───── 1. Checkout ───────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ───── 2. Parar serviços antigos (NSSM em Sysnative) ─────────────
-      - name: Stop Joana services
+      # ───── 2. Matar instâncias antigas (Node + Java) ────────────────
+      - name: Encerrar Joana já em execução
         shell: powershell
         run: |
-          $nssm = "$env:windir\Sysnative\nssm.exe"
-          & $nssm stop Joana_Node *>$null
-          & $nssm stop Joana_Java *>$null
+          Write-Host "Matando Node (index.js)…"
+          Get-CimInstance Win32_Process `
+            | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'index\.js' } `
+            | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Write-Host "Matando joana.jar…"
+          Get-CimInstance Win32_Process `
+            | Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } `
+            | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # ───── 3. Build JAR (Maven) ──────────────────────────────────────
+      # ───── 3. Build JAR (Maven) ─────────────────────────────────────
       - name: Setup JDK 17 + cache Maven
         uses: actions/setup-java@v4
         with:
@@ -36,7 +39,7 @@ jobs:
         shell: bash
         run: mvn -B clean package -DskipTests
 
-      # ───── 4. Build Node side ────────────────────────────────────────
+      # ───── 4. Build Node side ───────────────────────────────────────
       - name: Setup Node 18 + cache
         uses: actions/setup-node@v4
         with:
@@ -54,7 +57,7 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # ───── 5. Copiar artefactos para produção ────────────────────────
+      # ───── 5. Copiar artefatos para produção ────────────────────────
       - name: Deploy artefacts
         shell: powershell
         run: |
@@ -69,7 +72,7 @@ jobs:
           if (-not $jar) { Throw "JAR não encontrado." }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # Node artefactos
+          # Node artefatos
           $nodeSrc = "$env:GITHUB_WORKSPACE\src\main\javascript"
           if (Test-Path "$nodeSrc\dist") {
               robocopy "$nodeSrc\dist" $nodeDst /MIR /NFL /NDL /NJH /NJS > $null
@@ -77,10 +80,17 @@ jobs:
               robocopy "$nodeSrc"      $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS > $null
           }
 
-      # ───── 6. Start serviços ─────────────────────────────────────────
-      - name: Start Joana services
+      # ───── 6. Relançar aplicações (detached) ────────────────────────
+      - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
-          $nssm = "$env:windir\Sysnative\nssm.exe"
-          & $nssm start Joana_Node
-          & $nssm start Joana_Java
+          $prodRoot = "C:\Apps\Joana"
+          $nodeDir  = "$prodRoot\js"
+          
+          Write-Host "Iniciando Node (index.js)…"
+          Start-Process -FilePath "node.exe" -WorkingDirectory $nodeDir -ArgumentList "index.js" `
+                        -WindowStyle Hidden
+          
+          Write-Host "Iniciando joana.jar…"
+          Start-Process -FilePath "java.exe" -WorkingDirectory $prodRoot -ArgumentList "-jar joana.jar" `
+                        -WindowStyle Hidden
