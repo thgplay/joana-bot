@@ -104,7 +104,7 @@ jobs:
       #################################################################
       # 5. (Novo) Reiniciar ou criar serviços NSSM                    #
       #################################################################
-      - name: Reiniciar ou criar serviços Joana (NSSM)
+      - name: Garantir serviços Joana (NSSM)
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -117,20 +117,20 @@ jobs:
             sc.exe query $name 2>$null | Out-Null
             $exists = ($LASTEXITCODE -eq 0)
           
-            if ($exists) {
-              Write-Host "$name existe → reiniciando."
-              Stop-Service  -Name $name -Force
-              & $nssm set $name AppDirectory $dir
-              & $nssm set $name AppParameters $args
-              Start-Service -Name $name
-            }
-            else {
+            if (-not $exists) {
               Write-Host "$name não existe → criando."
               & $nssm install $name "`"$exe`"" $args
               & $nssm set     $name AppDirectory $dir
               & $nssm set     $name Start SERVICE_AUTO_START
-              Start-Service -Name $name
+            } else {
+              Write-Host "$name já existe → garantindo parâmetros corretos."
+              & $nssm set $name AppDirectory $dir
+              & $nssm set $name AppParameters $args
             }
+          
+            # tenta iniciar; se já estiver rodando, StartService falhará silencioso
+            sc.exe start $name 2>$null | Out-Null
+            Write-Host "$name em execução."
           }
           
           $nodeArgs = "`"$appDir\js\index.js`""
