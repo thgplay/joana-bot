@@ -106,6 +106,7 @@ public class OpenAiService {
                 return resposta;
 
             } catch (IOException e) {
+                e.printStackTrace();
                 return "❌ Erro ao se comunicar com a OpenAI: " + e.getMessage();
             }
         }, executor);
