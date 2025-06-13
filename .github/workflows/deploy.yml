@@ -58,21 +58,23 @@ jobs:
         working-directory: src/main/javascript
         shell: powershell
         run: |
-          git rev-parse --verify HEAD^ 2>$null
+          # verifica se existe commit anterior ao HEAD
+          git rev-parse --verify HEAD~1 2>$null
           if ($LASTEXITCODE -eq 0) {
-            git diff --quiet HEAD^ HEAD -- src/main/javascript
-            $needBuild = $LASTEXITCODE -ne 0
+          git diff --quiet HEAD~1 HEAD -- src/main/javascript
+          $needBuild = ($LASTEXITCODE -ne 0)
           } else {
-            Write-Host 'Primeiro commit no branch → build forçado'
-            $needBuild = $true
+          Write-Host "Primeiro commit no branch → build forçado"
+          $needBuild = $true
           }
           
           if ($needBuild) {
-            Write-Host 'Alterações em JS → executando build'
-            npm run build --if-present
+          Write-Host "Alterações em JS → executando build"
+          npm run build --if-present
           } else {
-            Write-Host 'Nenhuma alteração em JS → pulando build'
+          Write-Host "Nenhuma alteracao em JS → pulando build"
           }
+
 
       # 4. Build Java
       - name: Build joana.jar
