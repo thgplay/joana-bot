@@ -11,7 +11,7 @@ jobs:
 
     steps:
       #################################################################
-      # 0. JAVA_HOME + PATH (JDK 21 local)                            #
+      # 0. JAVA_HOME e PATH (JDK 21 local)                            #
       #################################################################
       - name: Set JAVA_HOME + PATH
         shell: powershell
@@ -20,14 +20,14 @@ jobs:
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
       #################################################################
-      # 1. Faz checkout do código                                     #
+      # 1. Checkout                                                   #
       #################################################################
       - uses: actions/checkout@v4
 
       #################################################################
       # 2. Mata instâncias antigas                                    #
       #################################################################
-      - name: Encerrar Node + Java antigo
+      - name: Encerrar Node + Java antigos
         shell: powershell
         run: |
           Get-CimInstance Win32_Process |
@@ -38,7 +38,7 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
       #################################################################
-      # 3. Node 18 + cache npm e node_modules                         #
+      # 3. Setup Node 18 + cache                                      #
       #################################################################
       - uses: actions/setup-node@v4
         with:
@@ -71,7 +71,7 @@ jobs:
         run: mvn -B clean package -DskipTests
 
       #################################################################
-      # 5. Copia artefatos p/ C:\Apps\Joana                           #
+      # 5. Copiar artefatos p/ C:\Apps\Joana                          #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
@@ -86,30 +86,40 @@ jobs:
           New-Item -ItemType Directory -Path $nodeDst   -Force | Out-Null
           New-Item -ItemType Directory -Path $configDir -Force | Out-Null
           
-          # ---- JAR ---------------------------------------------------
-          $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
+          # ---------- JAR -------------------------------------------------
+          $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' |
+                 Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # ---- application.properties externo -----------------------
-          $appPropsSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\resources\application.properties'
-          if (Test-Path $appPropsSrc) {
-            Copy-Item $appPropsSrc (Join-Path $configDir 'application.properties') -Force
-            Write-Host "application.properties copiado para pasta config"
+          # ---------- application.properties / .yml -----------------------
+          $appProps = Get-ChildItem "$env:GITHUB_WORKSPACE\src\main\resources" `
+                       -Filter 'application.*' -Include '*.properties','*.yml','*.yaml' |
+                       Select-Object -First 1
+          if ($appProps) {
+            Copy-Item $appProps.FullName (Join-Path $configDir $appProps.Name) -Force
+            Write-Host "$($appProps.Name) copiado para pasta config"
           } else {
-            Write-Host "Aviso: application.properties não encontrado no repo"
+            Write-Host "Aviso: application.properties/.yml não encontrado no repo"
           }
           
-          # ---- Código / bundle Node ---------------------------------
+          # ---------- código Node + .env ----------------------------------
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
           
+          # 1) arquivos JS
           if (Test-Path $distDir) {
             robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
           } else {
-            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /XD node_modules /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
+          }
+          
+          # 2) .env
+          if (Test-Path (Join-Path $nodeSrc '.env')) {
+            Copy-Item (Join-Path $nodeSrc '.env') (Join-Path $nodeDst '.env') -Force
+            Write-Host ".env copiado para pasta js"
           }
           
           # Robocopy: 0‑7 = sucesso
