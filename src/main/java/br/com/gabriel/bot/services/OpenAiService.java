@@ -43,7 +43,7 @@ public class OpenAiService {
                 // Prompt inicial
                 ObjectNode systemMessage = mapper.createObjectNode();
                 systemMessage.put("role", "system");
-                systemMessage.put("content", gerarPromptBase(sender, nome));
+                systemMessage.put("content", gerarPromptBase(nome));
                 messages.add(systemMessage);
 
                 // Histórico
@@ -113,7 +113,7 @@ public class OpenAiService {
 
 
 
-    private String gerarPromptBase(String user, String nome) {
+    private String gerarPromptBase(String nome) {
         String path = "prompt_joana.txt";
         try {
             String prompt = Files.readString(Path.of(path), StandardCharsets.UTF_8);
