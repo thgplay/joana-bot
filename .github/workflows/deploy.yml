@@ -126,5 +126,14 @@ jobs:
         run: |
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
+          
+          # ---- Node -------------------------------------------------
+          # /c  = fecha o shell depois de lançar
+          # start "Título" /D "dir" comando args
           cmd /c start "Joana Node" /D "$nodeDir" node index.js
+          
+          # ---- Java -------------------------------------------------
           cmd /c start "Joana Java" /D "$prodRoot" java -jar joana.jar
+          
+          exit 0
+
