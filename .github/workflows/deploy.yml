@@ -10,23 +10,23 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     steps:
-      # -----------------------------------------------------------
-      # 0. JAVA 21 no PATH
-      # -----------------------------------------------------------
+      #################################################################
+      # 0. JAVA_HOME + PATH (JDK 21)                                  #
+      #################################################################
       - name: Set JAVA_HOME + PATH
         shell: powershell
         run: |
           Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
-      # -----------------------------------------------------------
-      # 1. Checkout
-      # -----------------------------------------------------------
+      #################################################################
+      # 1. Checkout                                                   #
+      #################################################################
       - uses: actions/checkout@v4
 
-      # -----------------------------------------------------------
-      # 2. Mata instâncias antigas
-      # -----------------------------------------------------------
+      #################################################################
+      # 2. Finaliza instâncias antigas                                #
+      #################################################################
       - name: Encerrar Node + Java antigos
         shell: powershell
         run: |
@@ -37,25 +37,16 @@ jobs:
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # -----------------------------------------------------------
-      # 3. Node 18 + cache npm
-      # -----------------------------------------------------------
-      - uses: actions/setup-node@v4
+      #################################################################
+      # 3. Node 18 (sem cache de node_modules)                        #
+      #################################################################
+      - uses: actions/setup-node@v4        # só cacheia o diretório npm, não o node_modules
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: src/main/javascript/package-lock.json
 
-      - name: Cache node_modules
-        id: node-cache
-        uses: actions/cache@v4
-        with:
-          path: src/main/javascript/node_modules
-          key:  ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-nm-
-
-      - name: Instalar dependências Node (quando cache miss)
-        if: steps.node-cache.outputs.cache-hit != 'true'
+      - name: Instalar dependências Node
         working-directory: src/main/javascript
         run: npm ci --no-audit --no-fund --prefer-offline
 
@@ -63,16 +54,13 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # -----------------------------------------------------------
-      # 4. Build Java / Maven
-      # -----------------------------------------------------------
+      #################################################################
+      # 4. Build Java / Maven                                         #
+      #################################################################
       - name: Build joana.jar
         shell: powershell
-        run: mvn -B clean package -DskipTests
+        run: mvn -B clean package -DskipTests    # resources são empacotados no JAR
 
-      # -----------------------------------------------------------
-      # 5. Copiar artefatos
-      # -----------------------------------------------------------
       #################################################################
       # 5. Copiar artefatos p/ C:\Apps\Joana                          #
       #################################################################
@@ -80,50 +68,47 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-
+          
           $prodRoot = 'C:\Apps\Joana'
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
-
+          
           New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
-
+          
           # ---------- JAR ----------
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' |
                  Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
-
+          
           # ---------- código JS + node_modules + .env ----------
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
-
+          
           $rc1 = 0; $rc2 = 0
-
+          
           if (Test-Path $distDir) {
-            $null = robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-            $rc1  = $LASTEXITCODE
-            $null = robocopy (Join-Path $nodeSrc 'node_modules') `
-                             (Join-Path $nodeDst 'node_modules') /MIR /NFL /NDL /NJH /NJS /NP
-            $rc2  = $LASTEXITCODE
+            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc1 = $LASTEXITCODE
+            robocopy (Join-Path $nodeSrc 'node_modules') (Join-Path $nodeDst 'node_modules') /MIR /NFL /NDL /NJH /NJS /NP
+            $rc2 = $LASTEXITCODE
           } else {
-            $null = robocopy $nodeSrc $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-            $rc1  = $LASTEXITCODE
+            robocopy $nodeSrc $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc1 = $LASTEXITCODE
           }
-
+          
           # garante .env
           if (Test-Path (Join-Path $nodeSrc '.env')) {
             Copy-Item (Join-Path $nodeSrc '.env') (Join-Path $nodeDst '.env') -Force
             Write-Host ".env copiado para pasta js"
           }
-
+          
           $rcMax = [Math]::Max($rc1,$rc2)
-          # robocopy 0‑7 = sucesso/aviso; ≥8 = falha
           if ($rcMax -ge 8) { exit $rcMax } else { exit 0 }
-      
 
-      # -----------------------------------------------------------
-      # 6. Inicia Node + Spring em janelas                        #
-      # -----------------------------------------------------------
+      #################################################################
+      # 6. Inicia Node + Spring em janelas interativas                #
+      #################################################################
       - name: Iniciar Joana Node + Java (consoles)
         shell: powershell
         run: |
@@ -131,6 +116,7 @@ jobs:
           $nodeDir  = Join-Path $prodRoot 'js'
           $envFile  = Join-Path $nodeDir '.env'
           
+          # carrega .env no ambiente do processo atual
           if (Test-Path $envFile) {
             Get-Content $envFile | ForEach-Object {
               if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*)\s*$') {
@@ -142,10 +128,12 @@ jobs:
             }
           }
           
+          # janela Node
           Start-Process cmd.exe -WindowStyle Normal `
             -ArgumentList '/k node -r dotenv/config index.js ^& pause' `
             -WorkingDirectory $nodeDir
           
+          # janela Java
           Start-Process cmd.exe -WindowStyle Normal `
             -ArgumentList '/k java -jar joana.jar ^& pause' `
             -WorkingDirectory $prodRoot
