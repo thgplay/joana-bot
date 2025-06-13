@@ -71,10 +71,16 @@ jobs:
           $distDir = Join-Path $nodeSrc 'dist'
           
           if (Test-Path $distDir) {
-          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+          $rc = $LASTEXITCODE
           } else {
-          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP | Out-Null
+          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+          $rc = $LASTEXITCODE
           }
+          
+          # Robocopy: 0‑7 = OK, >=8 = erro
+          if ($rc -ge 8) { exit $rc } else { exit 0 }
+
 
 
 
