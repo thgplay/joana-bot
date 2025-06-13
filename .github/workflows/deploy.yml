@@ -9,10 +9,10 @@ jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
 
-    #################################################################
-    # 0. JAVA_HOME e PATH (JDK 21 local)                            #
-    #################################################################
     steps:
+      #################################################################
+      # 0. JAVA_HOME + PATH (JDK 21 local)                            #
+      #################################################################
       - name: Set JAVA_HOME + PATH
         shell: powershell
         run: |
@@ -20,7 +20,7 @@ jobs:
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
       #################################################################
-      # 1. Checkout                                                   #
+      # 1. Faz checkout do código                                     #
       #################################################################
       - uses: actions/checkout@v4
 
@@ -38,7 +38,7 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
       #################################################################
-      # 3. Setup Node 18 + cache npm (+ opcional node_modules)        #
+      # 3. Node 18 + cache npm e node_modules                         #
       #################################################################
       - uses: actions/setup-node@v4
         with:
@@ -46,16 +46,15 @@ jobs:
           cache: npm
           cache-dependency-path: src/main/javascript/package-lock.json
 
-      # cache dos node_modules (pula npm ci quando lockfile não mudou)
       - name: Cache node_modules
         id: node-cache
         uses: actions/cache@v4
         with:
           path: src/main/javascript/node_modules
-          key: ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
+          key:  ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
           restore-keys: ${{ runner.os }}-nm-
 
-      - name: Instalar dependências Node (se necessário)
+      - name: Instalar dependências Node (quando cache miss)
         if: steps.node-cache.outputs.cache-hit != 'true'
         working-directory: src/main/javascript
         run: npm ci --no-audit --no-fund --prefer-offline
@@ -72,32 +71,45 @@ jobs:
         run: mvn -B clean package -DskipTests
 
       #################################################################
-      # 5. Copiar artefatos para C:\Apps\Joana                        #
+      # 5. Copia artefatos p/ C:\Apps\Joana                           #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           
-          $prodRoot = 'C:\Apps\Joana'
-          $nodeDst  = Join-Path $prodRoot 'js'
-          $jarDst   = Join-Path $prodRoot 'joana.jar'
+          $prodRoot  = 'C:\Apps\Joana'
+          $nodeDst   = Join-Path $prodRoot 'js'
+          $jarDst    = Join-Path $prodRoot 'joana.jar'
+          $configDir = Join-Path $prodRoot 'config'
           
-          New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
+          New-Item -ItemType Directory -Path $nodeDst   -Force | Out-Null
+          New-Item -ItemType Directory -Path $configDir -Force | Out-Null
           
+          # ---- JAR ---------------------------------------------------
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
+          # ---- application.properties externo -----------------------
+          $appPropsSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\resources\application.properties'
+          if (Test-Path $appPropsSrc) {
+            Copy-Item $appPropsSrc (Join-Path $configDir 'application.properties') -Force
+            Write-Host "application.properties copiado para pasta config"
+          } else {
+            Write-Host "Aviso: application.properties não encontrado no repo"
+          }
+          
+          # ---- Código / bundle Node ---------------------------------
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
           
           if (Test-Path $distDir) {
-          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-          $rc = $LASTEXITCODE
+            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           } else {
-          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
-          $rc = $LASTEXITCODE
+            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           }
           
           # Robocopy: 0‑7 = sucesso
@@ -111,11 +123,30 @@ jobs:
         run: |
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
+          $envFile  = Join-Path $nodeDir '.env'
           
-          # abre janela Node
-          cmd /c start "Joana Node" /D "$nodeDir" cmd /k node index.js
+          # ---- carrega .env (se existir) ----------------------------
+          if (Test-Path $envFile) {
+            Get-Content $envFile | ForEach-Object {
+              if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*)\s*$') {
+                $name  = $matches[1].Trim()
+                $value = $matches[2].Trim('" ')
+                [System.Environment]::SetEnvironmentVariable($name,$value,'Process')
+              }
+            }
+            Write-Host ".env carregado de $envFile"
+          }
           
-          # abre janela Java
-          cmd /c start "Joana Java" /D "$prodRoot" cmd /k java -jar joana.jar
+          # ---- abre janela Node -------------------------------------
+          Start-Process -WindowStyle Normal `
+            -FilePath "cmd.exe" `
+            -ArgumentList "/k node -r dotenv/config index.js" `
+            -WorkingDirectory $nodeDir
+          
+          # ---- abre janela Java -------------------------------------
+          Start-Process -WindowStyle Normal `
+            -FilePath "cmd.exe" `
+            -ArgumentList "/k java -jar joana.jar" `
+            -WorkingDirectory $prodRoot
           
           exit 0
