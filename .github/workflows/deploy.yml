@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows + NSSM)
+name: CI‑CD Joana (runner interativo)
 
 on:
   push:
@@ -10,24 +10,35 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     #################################################################
-    # 0. JAVA_HOME + PATH                                           #
+    # 0. JAVA_HOME e PATH (JDK 21 local)                            #
     #################################################################
     steps:
-      - name: Set JAVA_HOME e PATH
+      - name: Set JAVA_HOME + PATH
         shell: powershell
         run: |
           Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
       #################################################################
-      # 1. Checkout (2 commits para diff JS)                          #
+      # 1. Checkout                                                   #
       #################################################################
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       #################################################################
-      # 2. Node (cache npm + node_modules)                            #
+      # 2. Mata instâncias antigas                                    #
+      #################################################################
+      - name: Encerrar Node + Java antigo
+        shell: powershell
+        run: |
+          Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'index\.js' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+      #################################################################
+      # 3. Setup Node 18 + cache npm (+ opcional node_modules)        #
       #################################################################
       - uses: actions/setup-node@v4
         with:
@@ -35,45 +46,33 @@ jobs:
           cache: npm
           cache-dependency-path: src/main/javascript/package-lock.json
 
+      # cache dos node_modules (pula npm ci quando lockfile não mudou)
       - name: Cache node_modules
         id: node-cache
         uses: actions/cache@v4
         with:
           path: src/main/javascript/node_modules
-          key:  ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
+          key: ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
           restore-keys: ${{ runner.os }}-nm-
 
-      - name: Install Node deps
+      - name: Instalar dependências Node (se necessário)
         if: steps.node-cache.outputs.cache-hit != 'true'
         working-directory: src/main/javascript
         run: npm ci --no-audit --no-fund --prefer-offline
 
-      - name: Build JS (executa só se mudou)
+      - name: Build front‑end (opcional)
         working-directory: src/main/javascript
-        shell: powershell
-        run: |
-          git rev-parse --verify HEAD~1 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            git diff --quiet HEAD~1 HEAD -- src/main/javascript
-            $needBuild = ($LASTEXITCODE -ne 0)
-          } else { $needBuild = $true }
-          
-          if ($needBuild) {
-            Write-Host "Alterações em JS → executando build"
-            npm run build --if-present
-          } else {
-            Write-Host "Nenhuma alteração em JS → pulando build"
-          }
+        run: npm run build --if-present
 
       #################################################################
-      # 3. Build Java / Maven                                         #
+      # 4. Build Java / Maven                                         #
       #################################################################
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
       #################################################################
-      # 4. Copiar artefatos para C:\Apps\Joana                        #
+      # 5. Copiar artefatos para C:\Apps\Joana                        #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
@@ -99,51 +98,21 @@ jobs:
             robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
           }
-          if ($rc -ge 8) { exit $rc } else { exit 0 }
+          if ($rc -ge 8) { exit $rc }
 
       #################################################################
-      # 5. (Novo) Reiniciar ou criar serviços NSSM                    #
+      # 6. Inicia Node + Spring em janelas interativas                #
       #################################################################
-      - name: Garantir serviços Joana (NSSM)
+      - name: Iniciar Joana Node + Java (consoles)
         shell: powershell
         run: |
-          $ErrorActionPreference = 'Stop'
+          $prodRoot = 'C:\Apps\Joana'
+          $nodeDir  = Join-Path $prodRoot 'js'
           
-          $nssm   = 'C:\Windows\System32\nssm.exe'
-          $appDir = 'C:\Apps\Joana'
-          $nodeExe= 'C:\Program Files\nodejs\node.exe'
-          $jarExe = 'C:\Program Files\Java\jdk-21\bin\java.exe'
+          # abre janela Node
+          cmd /c start "Joana Node" /D "$nodeDir" cmd /k node index.js
           
-          function Ensure-Service($name,$exe,$args,$dir) {
-            sc.exe query $name 2>$null | Out-Null
-            $exists = ($LASTEXITCODE -eq 0)
+          # abre janela Java
+          cmd /c start "Joana Java" /D "$prodRoot" cmd /k java -jar joana.jar
           
-            if (-not $exists) {
-              Write-Host "$name não existe → criando."
-              & $nssm install $name "`"$exe`"" $args
-              & $nssm set $name AppDirectory $dir
-              & $nssm set $name Start SERVICE_AUTO_START
-            } else {
-              Write-Host "$name já existe → mantendo configuração."
-            }
-          
-            # tenta iniciar (0 = iniciado, 2 = já em execução)
-            & $nssm start $name
-            if ($LASTEXITCODE -in 0,2) {
-              Write-Host "$name em execução."
-            } else {
-              throw "Falha ao iniciar $name (código $LASTEXITCODE)."
-            }
-          }
-          
-          $nodeArgs = "`"$appDir\js\index.js`""
-          $javaArgs = "-jar `"$appDir\joana.jar`""
-          
-          Ensure-Service 'JoanaNode' $nodeExe $nodeArgs "$appDir\js"
-          Ensure-Service 'JoanaJava' $jarExe  $javaArgs  $appDir
-          
-          Write-Host 'Serviços JoanaNode e JoanaJava OK.'
           exit 0
-
-
-
