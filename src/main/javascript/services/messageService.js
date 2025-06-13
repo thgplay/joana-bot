@@ -7,7 +7,7 @@ require('dotenv').config();
 const userQueues = new Map();
 const DELAY_BETWEEN_MESSAGES = 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const WEBHOOK_TIMEOUT = 5000;
+const WEBHOOK_TIMEOUT = 10000;
 
 function getQueue(userId) {
     if (!userQueues.has(userId)) {
