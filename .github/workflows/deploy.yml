@@ -10,23 +10,23 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     steps:
-      # ---------------------------------------------------------------
-      # 0. JAVA_HOME + PATH (JDK 21)                                   #
-      # ---------------------------------------------------------------
+      #################################################################
+      # 0. JAVA_HOME + PATH (JDK 21 local)                            #
+      #################################################################
       - name: Set JAVA_HOME + PATH
         shell: powershell
         run: |
           Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
-      # ---------------------------------------------------------------
+      #################################################################
       # 1. Checkout                                                   #
-      # ---------------------------------------------------------------
+      #################################################################
       - uses: actions/checkout@v4
 
-      # ---------------------------------------------------------------
+      #################################################################
       # 2. Mata instâncias antigas                                    #
-      # ---------------------------------------------------------------
+      #################################################################
       - name: Encerrar Node + Java antigos
         shell: powershell
         run: |
@@ -37,9 +37,9 @@ jobs:
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # ---------------------------------------------------------------
+      #################################################################
       # 3. Node 18 + cache npm                                        #
-      # ---------------------------------------------------------------
+      #################################################################
       - uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -63,16 +63,16 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # ---------------------------------------------------------------
+      #################################################################
       # 4. Build Java / Maven                                         #
-      # ---------------------------------------------------------------
+      #################################################################
       - name: Build joana.jar
         shell: powershell
-        run: mvn -B clean package -DskipTests  # resources são incluídos no JAR
+        run: mvn -B clean package -DskipTests   # application.properties já vai dentro do JAR
 
-      # ---------------------------------------------------------------
-      # 5. Copiar artefatos                                           #
-      # ---------------------------------------------------------------
+      #################################################################
+      # 5. Copiar artefatos p/ C:\Apps\Joana                          #
+      #################################################################
       - name: Copiar artefatos
         shell: powershell
         run: |
@@ -82,27 +82,33 @@ jobs:
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
           
+          # limpa destino para evitar arquivos órfãos
+          if (Test-Path $nodeDst) { Remove-Item $nodeDst -Recurse -Force }
           New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
           
-          # --- JAR ---
+          # ---------- JAR ----------
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' |
                  Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # --- código Node (.env incluído) ---
+          # ---------- código JS + node_modules + .env ----------
           $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
           $distDir = Join-Path $nodeSrc 'dist'
           
           if (Test-Path $distDir) {
+            # copia bundle gerado
             robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            # copia node_modules completo
+            robocopy (Join-Path $nodeSrc 'node_modules') (Join-Path $nodeDst 'node_modules') /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
           } else {
-            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /XD node_modules /NFL /NDL /NJH /NJS /NP
+            # copia código‑fonte com node_modules
+            robocopy $nodeSrc $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
           }
           
-          # garante .env (sempre na raiz js)
+          # garante .env
           if (Test-Path (Join-Path $nodeSrc '.env')) {
             Copy-Item (Join-Path $nodeSrc '.env') (Join-Path $nodeDst '.env') -Force
             Write-Host ".env copiado para pasta js"
@@ -110,9 +116,9 @@ jobs:
           
           if ($rc -ge 8) { exit $rc } else { exit 0 }
 
-      # ---------------------------------------------------------------
+      #################################################################
       # 6. Inicia Node + Spring em janelas interativas                #
-      # ---------------------------------------------------------------
+      #################################################################
       - name: Iniciar Joana Node + Java (consoles)
         shell: powershell
         run: |
@@ -127,18 +133,18 @@ jobs:
                 [System.Environment]::SetEnvironmentVariable(
                   $matches[1].Trim(),
                   $matches[2].Trim('" '),
-                  'Process'
-                )
+                  'Process')
               }
             }
+            Write-Host ".env carregado de $envFile"
           }
           
-          # janela Node
+          # ------------- janela Node ---------------------------------
           Start-Process cmd.exe -WindowStyle Normal `
             -ArgumentList '/k node -r dotenv/config index.js' `
             -WorkingDirectory $nodeDir
           
-          # janela Java
+          # ------------- janela Java ---------------------------------
           Start-Process cmd.exe -WindowStyle Normal `
             -ArgumentList '/k java -jar joana.jar' `
             -WorkingDirectory $prodRoot
