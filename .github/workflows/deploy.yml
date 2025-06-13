@@ -48,7 +48,7 @@ jobs:
 
       - name: Instalar dependências Node
         working-directory: src/main/javascript
-        run: npm ci --no-audit --no-fund --prefer-offline
+        run: npm install --no-audit --no-fund --prefer-offline
 
       - name: Build front‑end (opcional)
         working-directory: src/main/javascript
