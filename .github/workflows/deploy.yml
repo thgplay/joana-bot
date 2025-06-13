@@ -127,14 +127,13 @@ jobs:
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
           
-          # Node ------------------------------------------------------
-          cmd /K start "Joana Node" /MAX /D "$nodeDir" ^
-            cmd /K "echo ==== NODE STARTED ==== & node index.js ^> node.log 2^>^&1"
+          # Janela Node
+          start "Joana Node" cmd /k "cd /d `"$nodeDir`" && echo ==== NODE STARTED ==== && node index.js"
           
-          # Java ------------------------------------------------------
-          cmd /K start "Joana Java" /MAX /D "$prodRoot" ^
-            cmd /K "echo ==== SPRING STARTED ==== & java -jar joana.jar ^> java.log 2^>^&1"
+          # Janela Java
+          start "Joana Java" cmd /k "cd /d `"$prodRoot`" && echo ==== SPRING STARTED ==== && java -jar joana.jar"
           
           exit 0
+
 
 
