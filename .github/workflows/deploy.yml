@@ -9,10 +9,10 @@ jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
 
+    #################################################################
+    # 0. JAVA_HOME + PATH                                           #
+    #################################################################
     steps:
-      #################################################################
-      # 0. Expõe JAVA_HOME e adiciona JDK‑21 ao PATH                  #
-      #################################################################
       - name: Set JAVA_HOME e PATH
         shell: powershell
         run: |
@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 2
 
       #################################################################
-      # 2. Setup Node 18 + caches                                     #
+      # 2. Node (cache npm + node_modules)                            #
       #################################################################
       - uses: actions/setup-node@v4
         with:
@@ -66,14 +66,14 @@ jobs:
           }
 
       #################################################################
-      # 3. Build Java                                                 #
+      # 3. Build Java / Maven                                         #
       #################################################################
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
       #################################################################
-      # 4. Deploy artefatos                                           #
+      # 4. Copiar artefatos para C:\Apps\Joana                        #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
@@ -102,33 +102,40 @@ jobs:
           if ($rc -ge 8) { exit $rc } else { exit 0 }
 
       #################################################################
-      # 5. Reinicia serviços NSSM                                     #
+      # 5. (Novo) Reiniciar ou criar serviços NSSM                    #
       #################################################################
       - name: Reiniciar ou criar serviços Joana (NSSM)
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          
           $nssm   = 'C:\Windows\System32\nssm.exe'
           $appDir = 'C:\Apps\Joana'
           $nodeExe= 'C:\Program Files\nodejs\node.exe'
           $jarExe = 'C:\Program Files\Java\jdk-21\bin\java.exe'
           
           function Ensure-Service($name,$exe,$args,$dir) {
-            sc.exe query $name 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
+            & $nssm status $name 2>$null
+            $exists = ($LASTEXITCODE -ne 3)   # 3 = service not installed
+            if ($exists) {
+              Write-Host "$name existe → reiniciando."
               & $nssm stop  $name 2>$null
+              & $nssm set   $name AppDirectory $dir
+              & $nssm set   $name AppParameters $args
               & $nssm start $name
-              Write-Host "$name reiniciado."
             } else {
-              Write-Host "$name não existe → criando via NSSM."
-              & $nssm install $name $exe $args
-              & $nssm set $name AppDirectory $dir
-              & $nssm set $name Start SERVICE_AUTO_START
-              & $nssm start $name
-              Write-Host "$name criado e iniciado."
+              Write-Host "$name não existe → criando."
+              & $nssm install $name "`"$exe`"" $args
+              & $nssm set     $name AppDirectory $dir
+              & $nssm set     $name Start SERVICE_AUTO_START
+              & $nssm start   $name
             }
           }
           
-          Ensure-Service JoanaNode $nodeExe "`"$appDir\js\index.js`"" "$appDir\js"
-          Ensure-Service JoanaJava $jarExe  "-jar `"$appDir\joana.jar`"" $appDir
-
+          $nodeArgs = "`"$appDir\js\index.js`""
+          $javaArgs = "-jar `"$appDir\joana.jar`""
+          
+          Ensure-Service 'JoanaNode' $nodeExe $nodeArgs "$appDir\js"
+          Ensure-Service 'JoanaJava' $jarExe  $javaArgs  $appDir
+          
+          Write-Host 'Serviços NSSM OK.'
