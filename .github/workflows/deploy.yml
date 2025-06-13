@@ -108,27 +108,28 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          
           $nssm   = 'C:\Windows\System32\nssm.exe'
           $appDir = 'C:\Apps\Joana'
           $nodeExe= 'C:\Program Files\nodejs\node.exe'
           $jarExe = 'C:\Program Files\Java\jdk-21\bin\java.exe'
           
           function Ensure-Service($name,$exe,$args,$dir) {
-            & $nssm status $name 2>$null
-            $exists = ($LASTEXITCODE -ne 3)   # 3 = service not installed
+            sc.exe query $name 2>$null | Out-Null
+            $exists = ($LASTEXITCODE -eq 0)
+          
             if ($exists) {
               Write-Host "$name existe → reiniciando."
-              & $nssm stop  $name 2>$null
-              & $nssm set   $name AppDirectory $dir
-              & $nssm set   $name AppParameters $args
-              & $nssm start $name
-            } else {
+              Stop-Service  -Name $name -Force
+              & $nssm set $name AppDirectory $dir
+              & $nssm set $name AppParameters $args
+              Start-Service -Name $name
+            }
+            else {
               Write-Host "$name não existe → criando."
               & $nssm install $name "`"$exe`"" $args
               & $nssm set     $name AppDirectory $dir
               & $nssm set     $name Start SERVICE_AUTO_START
-              & $nssm start   $name
+              Start-Service -Name $name
             }
           }
           
@@ -138,4 +139,5 @@ jobs:
           Ensure-Service 'JoanaNode' $nodeExe $nodeArgs "$appDir\js"
           Ensure-Service 'JoanaJava' $jarExe  $javaArgs  $appDir
           
-          Write-Host 'Serviços NSSM OK.'
+          Write-Host 'Serviços JoanaNode e JoanaJava OK.'
+
