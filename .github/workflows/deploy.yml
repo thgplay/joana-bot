@@ -50,31 +50,32 @@ jobs:
 
       # 5. Deploy artefatos
       - name: Deploy artefatos
-        shell: powershell
+        shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'   # falha rápido em qualquer erro
+          $ErrorActionPreference = "Stop"
           
           $prodRoot = 'C:\Apps\Joana'
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
           
-          # garante pastas‑alvo
-          if (-not (Test-Path $nodeDst))   { New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null }
+          if (-not (Test-Path $prodRoot)) { New-Item -ItemType Directory -Path $prodRoot -Force | Out-Null }
+          if (-not (Test-Path $nodeDst))  { New-Item -ItemType Directory -Path $nodeDst  -Force | Out-Null }
           
-          # cópia do JAR recém‑gerado
+          # --- copia JAR ---
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
-          if (-not $jar) {
-          throw 'JAR não encontrado.'
-          }
+          if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # sincronia dos arquivos Node
-          $nodeSrc = "$env:GITHUB_WORKSPACE\src\main\javascript"
-          if (Test-Path (Join-Path $nodeSrc 'dist')) {
-          robocopy (Join-Path $nodeSrc 'dist') $nodeDst /MIR /NFL /NDL /NJH /NJS | Out-Null
+          # --- sincroniza código Node ---
+          $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
+          $distDir = Join-Path $nodeSrc 'dist'
+          
+          if (Test-Path $distDir) {
+          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
           } else {
-          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS | Out-Null
+          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP | Out-Null
           }
+
 
 
       # 6. Relança Node + Java
