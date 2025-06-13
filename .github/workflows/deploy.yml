@@ -10,23 +10,19 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     steps:
-      #################################################################
-      # 0. Torna o JDK‑21 local visível para Maven / Spring Boot      #
-      #################################################################
-      - name: Set JAVA_HOME e PATH
+      # 0. JDK 21 local
+      - name: Set JAVA_HOME
         shell: powershell
         run: |
           Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
-      #################################################################
-      # 1. Checkout código                                            #
-      #################################################################
+      # 1. Checkout (traz 2 commits)
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2          # <‑‑ evita o erro do HEAD^
 
-      #################################################################
-      # 2. Encerra instâncias antigas                                 #
-      #################################################################
+      # 2. Mata instâncias antigas
       - name: Encerrar processos antigos
         shell: powershell
         run: |
@@ -37,94 +33,80 @@ jobs:
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      #################################################################
-      # 3. Ambiente Node (cache npm + cache node_modules)             #
-      #################################################################
-      - uses: actions/setup-node@v4            # instala Node + cache global (~/.npm)
+      # 3. Node + cache
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: src/main/javascript/package-lock.json
 
-      # cache do diretório node_modules pronto — chaveada pelo hash do lockfile
       - name: Cache node_modules
         id: node-cache
         uses: actions/cache@v4
         with:
           path: src/main/javascript/node_modules
           key:  ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-nm-
+          restore-keys: ${{ runner.os }}-nm-
 
-      - name: Install Node deps (pula se veio do cache)
+      - name: Install Node deps
         if: steps.node-cache.outputs.cache-hit != 'true'
         working-directory: src/main/javascript
-        run: |
-          npm ci --no-audit --no-fund --prefer-offline
+        run: npm ci --no-audit --no-fund --prefer-offline
 
-      # só reconstrói quando há mudanças no código JavaScript
+      # 3‑b. Build JS só quando há mudanças
       - name: Build (caso tenha script)
         working-directory: src/main/javascript
         shell: powershell
         run: |
-          # Se houver diff em src/main/javascript desde o commit anterior, builda
-          git diff --quiet HEAD^ HEAD -- src/main/javascript
-          if ($LASTEXITCODE -ne 0) {
-          Write-Host 'Alterações detectadas em JavaScript → executando build'
-          npm run build --if-present
+          git rev-parse --verify HEAD^ 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            git diff --quiet HEAD^ HEAD -- src/main/javascript
+            $needBuild = $LASTEXITCODE -ne 0
           } else {
-          Write-Host 'Nada mudou em src/main/javascript → skip build'
+            Write-Host 'Primeiro commit no branch → build forçado'
+            $needBuild = $true
+          }
+          
+          if ($needBuild) {
+            Write-Host 'Alterações em JS → executando build'
+            npm run build --if-present
+          } else {
+            Write-Host 'Nenhuma alteração em JS → pulando build'
           }
 
-
-      #################################################################
-      # 4. Build Java / Maven                                         #
-      #################################################################
+      # 4. Build Java
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
-      #################################################################
-      # 5. Deploy artefatos                                           #
-      #################################################################
+      # 5. Deploy artefatos
       - name: Deploy artefatos
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          
           $prodRoot = 'C:\Apps\Joana'
           $nodeDst  = Join-Path $prodRoot 'js'
           $jarDst   = Join-Path $prodRoot 'joana.jar'
+          if (-not (Test-Path $nodeDst)) { New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null }
           
-          if (-not (Test-Path $prodRoot)) { New-Item -ItemType Directory -Path $prodRoot -Force | Out-Null }
-          if (-not (Test-Path $nodeDst))  { New-Item -ItemType Directory -Path $nodeDst  -Force | Out-Null }
-          
-          # --- copia JAR ---
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado.' }
           Copy-Item $jar.FullName $jarDst -Force
           
-          # --- sincroniza código Node ---
-          $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
-          $distDir = Join-Path $nodeSrc 'dist'
-          
-          if (Test-Path $distDir) {
-            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-            $rc = $LASTEXITCODE
+          $src = 'src\main\javascript'
+          $dist = Join-Path $src 'dist'
+          if (Test-Path $dist) {
+            robocopy $dist $nodeDst /MIR /NFL /NDL /NJH /NJS /NP; $rc=$LASTEXITCODE
           } else {
-            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
-            $rc = $LASTEXITCODE
+            robocopy $src  $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP; $rc=$LASTEXITCODE
           }
           if ($rc -ge 8) { exit $rc }
 
-      #################################################################
-      # 6. Relança Node + Spring fora do job object do runner         #
-      #################################################################
+      # 6. Sobe Node + Spring fora do runner
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
-          
           cmd /c start "Joana Node" /D "$nodeDir" node index.js
           cmd /c start "Joana Java" /D "$prodRoot" java -jar joana.jar
