@@ -104,12 +104,31 @@ jobs:
       #################################################################
       # 5. Reinicia serviços NSSM                                     #
       #################################################################
-      - name: Reiniciar serviços Joana (NSSM)
+      - name: Reiniciar ou criar serviços Joana (NSSM)
         shell: powershell
         run: |
-          $nssm = 'C:\Windows\System32\nssm.exe'
-          & $nssm stop  JoanaNode  2>$null
-          & $nssm stop  JoanaJava  2>$null
-          & $nssm start JoanaNode
-          & $nssm start JoanaJava
-          Write-Host 'Serviços JoanaNode e JoanaJava reiniciados.'
+          $ErrorActionPreference = 'Stop'
+          $nssm   = 'C:\Windows\System32\nssm.exe'
+          $appDir = 'C:\Apps\Joana'
+          $nodeExe= 'C:\Program Files\nodejs\node.exe'
+          $jarExe = 'C:\Program Files\Java\jdk-21\bin\java.exe'
+          
+          function Ensure-Service($name,$exe,$args,$dir) {
+            sc.exe query $name 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              & $nssm stop  $name 2>$null
+              & $nssm start $name
+              Write-Host "$name reiniciado."
+            } else {
+              Write-Host "$name não existe → criando via NSSM."
+              & $nssm install $name $exe $args
+              & $nssm set $name AppDirectory $dir
+              & $nssm set $name Start SERVICE_AUTO_START
+              & $nssm start $name
+              Write-Host "$name criado e iniciado."
+            }
+          }
+          
+          Ensure-Service JoanaNode $nodeExe "`"$appDir\js\index.js`"" "$appDir\js"
+          Ensure-Service JoanaJava $jarExe  "-jar `"$appDir\joana.jar`"" $appDir
+
