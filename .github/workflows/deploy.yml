@@ -84,12 +84,15 @@ jobs:
           # Robocopy: 0‑7 = sucesso, >=8 = erro
           if ($rc -ge 8) { exit $rc } else { exit 0 }
 
-      # 6. Relança Node + Java
+      # 6. Relança Node + Java (fora do Job Object do runner)
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
           
-          Start-Process -FilePath 'node.exe' -WorkingDirectory $nodeDir -ArgumentList 'index.js' -WindowStyle Hidden
-          Start-Process -FilePath 'java.exe' -WorkingDirectory $prodRoot -ArgumentList '-jar joana.jar' -WindowStyle Hidden
+          # Node – abre console "Joana Node"
+          cmd /c start "Joana Node" /D "%nodeDir%" node index.js
+          
+          # Spring – abre console "Joana Java"
+          cmd /c start "Joana Java" /D "%prodRoot%" java -jar joana.jar
