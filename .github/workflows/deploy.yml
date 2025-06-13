@@ -121,19 +121,25 @@ jobs:
 
 
       # 6. Sobe Node + Spring fora do runner
-      - name: Iniciar Joana Node + Java
+      - name: Iniciar Joana Node + Java (via PsExec)
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
+          
+          $psexec   = 'C:\Tools\PsExec\PsExec.exe'   # caminho ao PsExec
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
           
-          # Janela Node
-          start "Joana Node" cmd /k "cd /d `"$nodeDir`" && echo ==== NODE STARTED ==== && node index.js"
+          # Node — janela Joana Node na sessão do usuário (Session 1)
+          & $psexec -accepteula -d -i 1 ^
+            cmd /k "cd /d `"$nodeDir`" && echo ==== NODE STARTED ==== && node index.js"
           
-          # Janela Java
-          start "Joana Java" cmd /k "cd /d `"$prodRoot`" && echo ==== SPRING STARTED ==== && java -jar joana.jar"
+          # Java — janela Joana Java
+          & $psexec -d -i 1 ^
+            cmd /k "cd /d `"$prodRoot`" && echo ==== SPRING STARTED ==== && java -jar joana.jar"
           
           exit 0
+
 
 
 
