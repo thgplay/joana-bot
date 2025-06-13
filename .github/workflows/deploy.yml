@@ -50,9 +50,9 @@ jobs:
 
       # 5. Deploy artefatos
       - name: Deploy artefatos
-        shell: pwsh
+        shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = 'Stop'
           
           $prodRoot = 'C:\Apps\Joana'
           $nodeDst  = Join-Path $prodRoot 'js'
@@ -75,6 +75,7 @@ jobs:
           } else {
           robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP | Out-Null
           }
+
 
 
 
