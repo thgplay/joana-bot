@@ -67,7 +67,15 @@ jobs:
         working-directory: src/main/javascript
         shell: powershell
         run: |
-          git diff --quiet HEAD^ HEAD -- src/main/javascript || npm run build --if-present
+          # Se houver diff em src/main/javascript desde o commit anterior, builda
+          git diff --quiet HEAD^ HEAD -- src/main/javascript
+          if ($LASTEXITCODE -ne 0) {
+          Write-Host 'Alterações detectadas em JavaScript → executando build'
+          npm run build --if-present
+          } else {
+          Write-Host 'Nada mudou em src/main/javascript → skip build'
+          }
+
 
       #################################################################
       # 4. Build Java / Maven                                         #
