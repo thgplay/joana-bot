@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows)
+name: CI‑CD Joana (self‑hosted Windows)
 
 on:
   push:
@@ -10,17 +10,23 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     steps:
-      # 0. Expõe o JDK 21 já instalado no host
+      #################################################################
+      # 0. Torna o JDK‑21 local visível para Maven / Spring Boot      #
+      #################################################################
       - name: Set JAVA_HOME e PATH
         shell: powershell
         run: |
           Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
           Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
 
-      # 1. Checkout
+      #################################################################
+      # 1. Checkout código                                            #
+      #################################################################
       - uses: actions/checkout@v4
 
-      # 2. Finaliza instâncias antigas
+      #################################################################
+      # 2. Encerra instâncias antigas                                 #
+      #################################################################
       - name: Encerrar processos antigos
         shell: powershell
         run: |
@@ -31,27 +37,48 @@ jobs:
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # 3. Ambiente Node (com cache)
-      - uses: actions/setup-node@v4
+      #################################################################
+      # 3. Ambiente Node (cache npm + cache node_modules)             #
+      #################################################################
+      - uses: actions/setup-node@v4            # instala Node + cache global (~/.npm)
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: src/main/javascript/package-lock.json
 
-      - name: Install Node deps
-        working-directory: src/main/javascript
-        run: npm ci
+      # cache do diretório node_modules pronto — chaveada pelo hash do lockfile
+      - name: Cache node_modules
+        id: node-cache
+        uses: actions/cache@v4
+        with:
+          path: src/main/javascript/node_modules
+          key:  ${{ runner.os }}-nm-${{ hashFiles('src/main/javascript/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nm-
 
+      - name: Install Node deps (pula se veio do cache)
+        if: steps.node-cache.outputs.cache-hit != 'true'
+        working-directory: src/main/javascript
+        run: |
+          npm ci --no-audit --no-fund --prefer-offline
+
+      # só reconstrói quando há mudanças no código JavaScript
       - name: Build (caso tenha script)
         working-directory: src/main/javascript
-        run: npm run build --if-present
+        shell: powershell
+        run: |
+          git diff --quiet HEAD^ HEAD -- src/main/javascript || npm run build --if-present
 
-      # 4. Build Java/Maven
+      #################################################################
+      # 4. Build Java / Maven                                         #
+      #################################################################
       - name: Build joana.jar
         shell: powershell
         run: mvn -B clean package -DskipTests
 
-      # 5. Deploy artefatos
+      #################################################################
+      # 5. Deploy artefatos                                           #
+      #################################################################
       - name: Deploy artefatos
         shell: powershell
         run: |
@@ -80,19 +107,16 @@ jobs:
             robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
           }
-          
-          # Robocopy: 0‑7 = sucesso, >=8 = erro
-          if ($rc -ge 8) { exit $rc } else { exit 0 }
+          if ($rc -ge 8) { exit $rc }
 
-      # 6. Relança Node + Java (fora do Job Object do runner)
+      #################################################################
+      # 6. Relança Node + Spring fora do job object do runner         #
+      #################################################################
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
           $prodRoot = 'C:\Apps\Joana'
           $nodeDir  = Join-Path $prodRoot 'js'
           
-          # Node – abre console "Joana Node"
-          cmd /c start "Joana Node" /D "%nodeDir%" node index.js
-          
-          # Spring – abre console "Joana Java"
-          cmd /c start "Joana Java" /D "%prodRoot%" java -jar joana.jar
+          cmd /c start "Joana Node" /D "$nodeDir" node index.js
+          cmd /c start "Joana Java" /D "$prodRoot" java -jar joana.jar
