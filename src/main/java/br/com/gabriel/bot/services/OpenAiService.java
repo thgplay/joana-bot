@@ -114,6 +114,7 @@ public class OpenAiService {
 
 
     private String gerarPromptBase(String nome) {
+        
         String path = "prompt_joana.txt";
         try {
             String prompt = Files.readString(Path.of(path), StandardCharsets.UTF_8);
