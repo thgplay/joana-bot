@@ -8,12 +8,15 @@ on:
 jobs:
   deploy:
     runs-on: [ self-hosted, windows ]
-    env:
-      # usa o JDK que já existe no host
-      JAVA_HOME: 'C:\Program Files\Java\jdk-21'
-      PATH: 'C:\Program Files\Java\jdk-21\bin;${{ env.PATH }}'
 
     steps:
+      # 0. Expõe JDK‑21 já instalado no host
+      - name: Set JAVA_HOME e PATH
+        shell: powershell
+        run: |
+          Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
+          Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
+
       # 1. Checkout
       - uses: actions/checkout@v4
 
@@ -41,7 +44,7 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # 4. Build Java/Maven (usa o JDK‑21 já configurado)
+      # 4. Build Java/Maven (usa JDK‑21 exposto no passo 0)
       - name: Build joana.jar
         run: mvn -B clean package -DskipTests
 
