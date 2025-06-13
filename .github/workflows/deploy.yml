@@ -1,4 +1,4 @@
-name: CI‑CD Joana (self‑hosted Windows)
+name: CI‑CD Joana (self‑hosted Windows)
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
     runs-on: [ self-hosted, windows ]
 
     steps:
-      # 0. Expõe JDK‑21 já instalado no host
+      # 0. Expõe o JDK 21 já instalado no host
       - name: Set JAVA_HOME e PATH
         shell: powershell
         run: |
@@ -31,10 +31,12 @@ jobs:
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-      # 3. Ambiente Node
+      # 3. Ambiente Node (com cache)
       - uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: npm
+          cache-dependency-path: src/main/javascript/package-lock.json
 
       - name: Install Node deps
         working-directory: src/main/javascript
@@ -44,8 +46,9 @@ jobs:
         working-directory: src/main/javascript
         run: npm run build --if-present
 
-      # 4. Build Java/Maven (usa JDK‑21 exposto no passo 0)
+      # 4. Build Java/Maven
       - name: Build joana.jar
+        shell: powershell
         run: mvn -B clean package -DskipTests
 
       # 5. Deploy artefatos
@@ -71,25 +74,22 @@ jobs:
           $distDir = Join-Path $nodeSrc 'dist'
           
           if (Test-Path $distDir) {
-          robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-          $rc = $LASTEXITCODE
+            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           } else {
-          robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
-          $rc = $LASTEXITCODE
+            robocopy $nodeSrc $nodeDst /MIR /XF package*.json /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
           }
           
-          # Robocopy: 0‑7 = OK, >=8 = erro
+          # Robocopy: 0‑7 = sucesso, >=8 = erro
           if ($rc -ge 8) { exit $rc } else { exit 0 }
-
-
-
-
 
       # 6. Relança Node + Java
       - name: Iniciar Joana Node + Java
         shell: powershell
         run: |
-          $prodRoot = "C:\Apps\Joana"
-          $nodeDir  = "$prodRoot\js"
-          Start-Process -FilePath "node.exe" -WorkingDirectory $nodeDir -ArgumentList "index.js" -WindowStyle Hidden
-          Start-Process -FilePath "java.exe" -WorkingDirectory $prodRoot -ArgumentList "-jar joana.jar" -WindowStyle Hidden
+          $prodRoot = 'C:\Apps\Joana'
+          $nodeDir  = Join-Path $prodRoot 'js'
+          
+          Start-Process -FilePath 'node.exe' -WorkingDirectory $nodeDir -ArgumentList 'index.js' -WindowStyle Hidden
+          Start-Process -FilePath 'java.exe' -WorkingDirectory $prodRoot -ArgumentList '-jar joana.jar' -WindowStyle Hidden
