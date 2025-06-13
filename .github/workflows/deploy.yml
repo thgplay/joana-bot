@@ -108,6 +108,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          
           $nssm   = 'C:\Windows\System32\nssm.exe'
           $appDir = 'C:\Apps\Joana'
           $nodeExe= 'C:\Program Files\nodejs\node.exe'
@@ -120,14 +121,15 @@ jobs:
             if (-not $exists) {
               Write-Host "$name não existe → criando."
               & $nssm install $name "`"$exe`"" $args
-              & $nssm set     $name AppDirectory $dir
-              & $nssm set     $name Start SERVICE_AUTO_START
+              & $nssm set $name AppDirectory $dir
+              & $nssm set $name Start SERVICE_AUTO_START
             } else {
               Write-Host "$name já existe → mantendo configuração."
             }
           
-            sc.exe start $name 2>$null | Out-Null
-            if ($LASTEXITCODE -le 1) {  # 0 = iniciado, 1056 = já rodando
+            # tenta iniciar (0 = iniciado, 2 = já em execução)
+            & $nssm start $name
+            if ($LASTEXITCODE -in 0,2) {
               Write-Host "$name em execução."
             } else {
               throw "Falha ao iniciar $name (código $LASTEXITCODE)."
@@ -142,5 +144,6 @@ jobs:
           
           Write-Host 'Serviços JoanaNode e JoanaJava OK.'
           exit 0
+
 
 
