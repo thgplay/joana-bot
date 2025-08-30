@@ -12,7 +12,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, windows]
-
     permissions:
       contents: read
 
@@ -20,7 +19,7 @@ jobs:
       APP_ROOT: C:\Apps\Joana
       NODE_DIR: C:\Apps\Joana\js
       JAR_DST:  C:\Apps\Joana\joana.jar
-      NSSM_EXE: C:\nssm\nssm.exe          # ajuste se o nssm estiver noutro lugar
+      NSSM_EXE: C:\nssm\nssm.exe
       SVC_NODE: joana-node
       SVC_JAVA: joana-java
 
@@ -28,6 +27,30 @@ jobs:
       # 0) Checkout
       - name: Checkout
         uses: actions/checkout@v4
+
+      # 0.1) >>> NEW: Garantir Git no PATH do job (NetworkService não herda PATH do usuário)
+      - name: Garantir Git no PATH do job
+        shell: powershell
+        run: |
+          $candidatos = @(
+            'C:\Program Files\Git\cmd',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files (x86)\Git\cmd',
+            'C:\Program Files (x86)\Git\bin'
+          )
+          foreach ($p in $candidatos) {
+            if (Test-Path $p) { Add-Content $env:GITHUB_PATH $p }
+          }
+          Write-Host "Rodando como: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+          git --version
+
+      # 0.2) >>> NEW: Apontar npm para o git (fallback)
+      - name: Apontar npm para o git (fallback)
+        shell: powershell
+        run: |
+          $git = (Get-Command git -ErrorAction Stop).Source
+          npm config set git "`"$git`""
+          npm config get git
 
       # 1) Java 21 + cache Maven
       - name: Setup Java 21
@@ -37,7 +60,7 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # 2) Descobrir caminho do Node (main/javascript OU src/main/javascript)
+      # 2) Detectar pasta Node
       - name: Detectar pasta Node
         id: detect
         shell: powershell
@@ -80,7 +103,7 @@ jobs:
         working-directory: ${{ steps.detect.outputs.nodeSrc }}
         run: npm run build --if-present
 
-      # 4) Encerrar instâncias antigas (se ainda estiverem rodando)
+      # 4) Encerrar instâncias antigas
       - name: Encerrar Node + Java antigos
         shell: powershell
         run: |
@@ -97,7 +120,7 @@ jobs:
         shell: powershell
         run: mvn -B -DskipTests clean package
 
-      # 6) Copiar artefatos p/ C:\Apps\Joana
+      # 6) Copiar artefatos
       - name: Copiar artefatos
         shell: powershell
         run: |
@@ -105,19 +128,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:APP_ROOT" | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:NODE_DIR" | Out-Null
 
-          # --------- JAR ---------
+          # JAR
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter '*.jar' |
                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado em target/.' }
           Copy-Item $jar.FullName "$env:JAR_DST" -Force
 
-          # --------- Node ---------
+          # Node
           function Invoke-Robo($src,$dst) {
             robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
             if ($rc -ge 8) { Write-Error \"robocopy falhou com código $rc\"; exit $rc }
           }
-
           $nodeSrc = "${{ steps.detect.outputs.nodeSrc }}"
           $distDir = "${{ steps.detect.outputs.distDir }}"
           if (Test-Path $distDir) {
@@ -129,28 +151,25 @@ jobs:
             Invoke-Robo $nodeSrc $env:NODE_DIR
           }
 
-          # --------- .env (se existir no repo) ---------
+          # .env (se existir)
           $envSrc = "${{ steps.detect.outputs.envFile }}"
           if (Test-Path $envSrc) {
             Copy-Item $envSrc (Join-Path $env:NODE_DIR '.env') -Force
           }
 
-          # --------- package-lock.json (sempre copiar se existir) ---------
+          # package-lock.json (se existir)
           $lockFile = (Join-Path $nodeSrc 'package-lock.json')
           if (Test-Path $lockFile) {
             Copy-Item $lockFile (Join-Path $env:NODE_DIR 'package-lock.json') -Force
           }
-      
 
-      # 7) (Opcional) recriar arquivos sensíveis via secrets
-      #    Descomente se quiser manter fora do repo:
+      # 7) (opcional) criar arquivos sensíveis via secrets
       # - name: Criar application.properties
       #   shell: powershell
       #   run: |
       #     if ('${{ secrets.APP_PROPERTIES }}' -ne '') {
       #       Set-Content -Path "$env:APP_ROOT\application.properties" -Value "${{ secrets.APP_PROPERTIES }}"
       #     }
-      #
       # - name: Criar prompt_joana.txt
       #   shell: powershell
       #   run: |
@@ -158,20 +177,16 @@ jobs:
       #       Set-Content -Path "$env:APP_ROOT\prompt_joana.txt" -Value "${{ secrets.PROMPT_JOANA }}"
       #     }
 
-      # 8) Garantir serviços NSSM e reiniciar (idempotente)
+      # 8) NSSM restart serviços
       - name: (NSSM) Garantir e reiniciar serviços
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path $env:NSSM_EXE)) {
-            throw "NSSM não encontrado em $env:NSSM_EXE. Instale em C:\nssm\nssm.exe ou ajuste NSSM_EXE."
+            throw "NSSM não encontrado em $env:NSSM_EXE."
           }
-
-          # Paths dos executáveis
           $nodeExe = (Get-Command node).Source
           $javaExe = (Get-Command java).Source
-
-          # Serviços: cria ou atualiza
           function Ensure-Service($name, $app, $dir, $params) {
             $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
             if (-not $svc) {
@@ -185,17 +200,14 @@ jobs:
               & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
             }
           }
-
           Ensure-Service $env:SVC_NODE $nodeExe $env:NODE_DIR "-r dotenv/config index.js"
           Ensure-Service $env:SVC_JAVA $javaExe $env:APP_ROOT "-jar joana.jar"
-
-          # Restart ambos
           & $env:NSSM_EXE stop  $env:SVC_NODE  ; Start-Sleep -Seconds 1
           & $env:NSSM_EXE start $env:SVC_NODE
           & $env:NSSM_EXE stop  $env:SVC_JAVA  ; Start-Sleep -Seconds 1
           & $env:NSSM_EXE start $env:SVC_JAVA
 
-      # 9) (Opcional) Smoke test
+      # 9) Smoke test
       - name: Smoke test
         shell: powershell
         continue-on-error: true
