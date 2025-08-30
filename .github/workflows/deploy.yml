@@ -126,19 +126,19 @@ jobs:
           $hasLock = Test-Path "${{ steps.detect.outputs.pkgLock }}"
           if ($hasLock) {
             Write-Host 'Tentando npm ci (lock encontrado)...'
-            & npm ci --no-audit --no-fund
+            npm ci --no-audit --no-fund
             $rc = $LASTEXITCODE
             if ($rc -ne 0) {
               Write-Warning 'npm ci falhou (lock possivelmente desatualizado). Fallback para npm install...'
-              & npm install --no-audit --no-fund --prefer-offline
+              npm install --no-audit --no-fund --prefer-offline
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           } else {
             Write-Host 'Sem lockfile — usando npm install.'
-            & npm install --no-audit --no-fund --prefer-offline
+            npm install --no-audit --no-fund --prefer-offline
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-      
+
       - name: Build front-end (se existir)
         if: ${{ hashFiles(steps.detect.outputs.pkgJson) != '' }}
         shell: powershell
