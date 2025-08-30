@@ -28,29 +28,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 0.1) >>> NEW: Garantir Git no PATH do job (NetworkService não herda PATH do usuário)
-      - name: Garantir Git no PATH do job
+      # 0.1) Localizar Git no sistema e injetar no PATH do job (não usa npm aqui)
+      - name: Localizar Git para o job
+        id: git
         shell: powershell
         run: |
-          $candidatos = @(
-            'C:\Program Files\Git\cmd',
-            'C:\Program Files\Git\bin',
-            'C:\Program Files (x86)\Git\cmd',
-            'C:\Program Files (x86)\Git\bin'
-          )
-          foreach ($p in $candidatos) {
-            if (Test-Path $p) { Add-Content $env:GITHUB_PATH $p }
-          }
           Write-Host "Rodando como: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-          git --version
 
-      # 0.2) >>> NEW: Apontar npm para o git (fallback)
-      - name: Apontar npm para o git (fallback)
-        shell: powershell
-        run: |
-          $git = (Get-Command git -ErrorAction Stop).Source
-          npm config set git "`"$git`""
-          npm config get git
+          $gitResolved = $false
+
+          # Tenta direto
+          try {
+            $gitPath = (Get-Command git -ErrorAction Stop).Source
+            $gitResolved = $true
+            Write-Host "git encontrado no PATH: $gitPath"
+          } catch {}
+
+          # Se não achou, injeta caminhos mais comuns e tenta de novo
+          if (-not $gitResolved) {
+            $candidatos = @(
+              'C:\Program Files\Git\cmd',
+              'C:\Program Files\Git\bin',
+              'C:\Program Files (x86)\Git\cmd',
+              'C:\Program Files (x86)\Git\bin'
+            )
+            foreach ($p in $candidatos) {
+              if (Test-Path $p) { Add-Content $env:GITHUB_PATH $p }
+            }
+            try {
+              $gitPath = (Get-Command git -ErrorAction Stop).Source
+              $gitResolved = $true
+              Write-Host "git encontrado após injetar PATH: $gitPath"
+            } catch {}
+          }
+
+          # Como último recurso, tenta pegar InstallPath do Registro
+          if (-not $gitResolved) {
+            $regKeys = @(
+              'HKLM:\SOFTWARE\GitForWindows',
+              'HKLM:\SOFTWARE\WOW6432Node\GitForWindows'
+            )
+            foreach ($rk in $regKeys) {
+              if (Test-Path $rk) {
+                $ip = (Get-ItemProperty $rk -ErrorAction SilentlyContinue).InstallPath
+                if ($ip -and (Test-Path $ip)) {
+                  foreach ($p in @('cmd','bin','mingw64\bin','usr\bin')) {
+                    $pp = Join-Path $ip $p
+                    if (Test-Path $pp) { Add-Content $env:GITHUB_PATH $pp }
+                  }
+                }
+              }
+            }
+            try {
+              $gitPath = (Get-Command git -ErrorAction Stop).Source
+              $gitResolved = $true
+              Write-Host "git encontrado via Registro: $gitPath"
+            } catch {}
+          }
+
+          if (-not $gitResolved) {
+            throw "git.exe não encontrado no PATH do serviço. Instale o Git for Windows ou ajuste os caminhos."
+          }
+
+          git --version
+          "GIT_EXE=$gitPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       # 1) Java 21 + cache Maven
       - name: Setup Java 21
@@ -85,6 +126,17 @@ jobs:
           cache-dependency-path: |
             main/javascript/package-lock.json
             src/main/javascript/package-lock.json
+
+      # 3.1) Agora sim: apontar o npm para o git absoluto (fallback)
+      - name: Apontar npm para o git (fallback)
+        shell: powershell
+        run: |
+          $npm = (Get-Command npm -ErrorAction Stop).Source
+          Write-Host "npm: $npm"
+          $git = "${{ steps.git.outputs.GIT_EXE }}"
+          if (-not $git) { $git = (Get-Command git -ErrorAction Stop).Source }
+          npm config set git "`"$git`""
+          npm config get git
 
       - name: Instalar deps Node
         if: ${{ hashFiles(steps.detect.outputs.pkgJson) != '' }}
@@ -138,7 +190,7 @@ jobs:
           function Invoke-Robo($src,$dst) {
             robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
-            if ($rc -ge 8) { Write-Error \"robocopy falhou com código $rc\"; exit $rc }
+            if ($rc -ge 8) { Write-Error "robocopy falhou com código $rc"; exit $rc }
           }
           $nodeSrc = "${{ steps.detect.outputs.nodeSrc }}"
           $distDir = "${{ steps.detect.outputs.distDir }}"
