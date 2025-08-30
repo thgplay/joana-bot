@@ -236,65 +236,61 @@ jobs:
 
       # 8) NSSM: garantir Node 22 no runtime e reiniciar serviços
       - name: (NSSM) Garantir e reiniciar serviços
-          shell: powershell
-          run: |
-            $ErrorActionPreference = 'Stop'
-            if (-not (Test-Path $env:NSSM_EXE)) {
-              throw "NSSM não encontrado em $env:NSSM_EXE."
-            }
-            
-            # >>> aponte explicitamente para o Node 22 instalado na VPS:
-            $nodeExe = 'C:\Program Files\nodejs\node.exe'
-            if (-not (Test-Path $nodeExe)) {
-              throw "Node 22 não encontrado em $nodeExe. Instale Node 22 LTS na VPS."
-            }
-            $nodeVer = & "$nodeExe" -v
-            Write-Host "Node runtime (serviço): $nodeVer"
-            
-            $javaExe = (Get-Command java).Source
-            
-            function Ensure-Service($name, $app, $dir, $params) {
-              $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-              if (-not $svc) {
-                & $env:NSSM_EXE install $name $app $params
-                & $env:NSSM_EXE set $name AppDirectory $dir
-                & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
-              } else {
-                & $env:NSSM_EXE set $name Application $app
-                & $env:NSSM_EXE set $name AppDirectory $dir
-                & $env:NSSM_EXE set $name AppParameters $params
-                & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
-              }
-            }
-            
-            Ensure-Service $env:SVC_NODE "$nodeExe" $env:NODE_DIR "-r dotenv/config index.js"
-            Ensure-Service $env:SVC_JAVA "$javaExe" $env:APP_ROOT "-jar joana.jar"
-            
-            # (logs + variáveis de ambiente do serviço Node)
-            New-Item -ItemType Directory -Force -Path "$env:APP_ROOT\logs" | Out-Null
-            New-Item -ItemType Directory -Force -Path "$env:NODE_DIR\auth_info" | Out-Null
-            
-            & $env:NSSM_EXE set $env:SVC_NODE AppStdout "$env:APP_ROOT\logs\joana-node.out.log"
-            & $env:NSSM_EXE set $env:SVC_NODE AppStderr "$env:APP_ROOT\logs\joana-node.err.log"
-            & $env:NSSM_EXE set $env:SVC_NODE AppRotateFiles 1
-            & $env:NSSM_EXE set $env:SVC_NODE AppRotateBytes 10485760
-            & $env:NSSM_EXE set $env:SVC_NODE AppRotateDelay 86400
-            
-            # Variáveis em múltiplas linhas (here-string PowerShell)
-            $envStr = @"
-            LOG_DIR=$env:APP_ROOT\logs
-            AUTH_DIR=$env:NODE_DIR\auth_info
-            DEBUG=baileys:*
-      "@
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path $env:NSSM_EXE)) {
+            throw "NSSM não encontrado em $env:NSSM_EXE."
+          }
 
-                & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra ""
-                & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra $envStr
+          # >>> aponte explicitamente para o Node 22 instalado na VPS:
+          $nodeExe = 'C:\Program Files\nodejs\node.exe'
+          if (-not (Test-Path $nodeExe)) {
+            throw "Node 22 não encontrado em $nodeExe. Instale Node 22 LTS na VPS."
+          }
+          $nodeVer = & "$nodeExe" -v
+          Write-Host "Node runtime (serviço): $nodeVer"
 
-                # Restart
-                & $env:NSSM_EXE stop  $env:SVC_NODE  ; Start-Sleep -Seconds 1
-                & $env:NSSM_EXE start $env:SVC_NODE
-                & $env:NSSM_EXE stop  $env:SVC_JAVA  ; Start-Sleep -Seconds 1
-                & $env:NSSM_EXE start $env:SVC_JAVA
+          $javaExe = (Get-Command java).Source
+
+          function Ensure-Service($name, $app, $dir, $params) {
+            $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+            if (-not $svc) {
+              & $env:NSSM_EXE install $name $app $params
+              & $env:NSSM_EXE set $name AppDirectory $dir
+              & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
+            } else {
+              & $env:NSSM_EXE set $name Application $app
+              & $env:NSSM_EXE set $name AppDirectory $dir
+              & $env:NSSM_EXE set $name AppParameters $params
+              & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
+            }
+          }
+
+          Ensure-Service $env:SVC_NODE "$nodeExe" $env:NODE_DIR "-r dotenv/config index.js"
+          Ensure-Service $env:SVC_JAVA "$javaExe" $env:APP_ROOT "-jar joana.jar"
+
+          # (logs + pastas necessárias)
+          New-Item -ItemType Directory -Force -Path "$env:APP_ROOT\logs" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$env:NODE_DIR\auth_info" | Out-Null
+
+          & $env:NSSM_EXE set $env:SVC_NODE AppStdout "$env:APP_ROOT\logs\joana-node.out.log"
+          & $env:NSSM_EXE set $env:SVC_NODE AppStderr "$env:APP_ROOT\logs\joana-node.err.log"
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateFiles 1
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateBytes 10485760
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateDelay 86400
+
+          # Variáveis em múltiplas linhas (usando CRLF explícito para evitar erro de formatação)
+          $envStr = "LOG_DIR=$env:APP_ROOT\logs`r`nAUTH_DIR=$env:NODE_DIR\auth_info`r`nDEBUG=baileys:*"
+
+          & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra ""
+          & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra $envStr
+
+          # Restart
+          & $env:NSSM_EXE stop  $env:SVC_NODE  ; Start-Sleep -Seconds 1
+          & $env:NSSM_EXE start $env:SVC_NODE
+          & $env:NSSM_EXE stop  $env:SVC_JAVA  ; Start-Sleep -Seconds 1
+          & $env:NSSM_EXE start $env:SVC_JAVA
       
 
       # 9) Smoke test
