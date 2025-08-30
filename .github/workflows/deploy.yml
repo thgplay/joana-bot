@@ -264,33 +264,40 @@ jobs:
             & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
           }
 
+          # Garante serviços
           Ensure-Service $env:SVC_NODE "$nodeExe" $env:NODE_DIR "-r dotenv/config index.js"
           Ensure-Service $env:SVC_JAVA "$javaExe"   $env:APP_ROOT "-jar joana.jar"
 
-          # Logs do Node
+          # Logs + rotação (NODE)
           & $env:NSSM_EXE set $env:SVC_NODE AppStdout "$env:APP_ROOT\logs\joana-node.out.log"
           & $env:NSSM_EXE set $env:SVC_NODE AppStderr "$env:APP_ROOT\logs\joana-node.err.log"
           & $env:NSSM_EXE set $env:SVC_NODE AppRotateFiles 1
-          & $env:NSSM_EXE set $env:SVC_NODE AppRotateBytes 10485760
-          & $env:NSSM_EXE set $env:SVC_NODE AppRotateDelay 86400
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateBytes 10485760   # 10 MB
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateDelay 86400      # 1 dia
 
-          # >>> AppEnvironmentExtra como REG_MULTI_SZ (um argumento por variável, sem vírgulas, sem quebras de linha)
+          # Variáveis do Node como REG_MULTI_SZ (um argumento por var)
           & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra `
             "LOG_DIR=$env:APP_ROOT\logs" `
             "AUTH_DIR=$env:NODE_DIR\auth_info" `
             "DEBUG=baileys:*"
 
-          # Restart com pequena espera
+          # Logs + rotação (SPRING/JAVA) — captura o console do Spring
+          & $env:NSSM_EXE set $env:SVC_JAVA AppStdout "$env:APP_ROOT\logs\joana-spring.out.log"
+          & $env:NSSM_EXE set $env:SVC_JAVA AppStderr "$env:APP_ROOT\logs\joana-spring.err.log"
+          & $env:NSSM_EXE set $env:SVC_JAVA AppRotateFiles 1
+          & $env:NSSM_EXE set $env:SVC_JAVA AppRotateBytes 10485760   # 10 MB
+          & $env:NSSM_EXE set $env:SVC_JAVA AppRotateDelay 86400      # 1 dia
+
+          # Restart
           function Restart-Svc($name) {
             try { & $env:NSSM_EXE stop  $name | Out-Null } catch {}
             Start-Sleep -Seconds 2
             & $env:NSSM_EXE start $name | Out-Null
           }
-
           Restart-Svc $env:SVC_NODE
           Restart-Svc $env:SVC_JAVA
-
           Write-Host "NSSM: serviços reiniciados."
+      
       
       
 
