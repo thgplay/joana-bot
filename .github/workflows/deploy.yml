@@ -105,13 +105,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:APP_ROOT" | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:NODE_DIR" | Out-Null
 
-          # JAR mais recente
+          # --------- JAR ---------
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter '*.jar' |
                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado em target/.' }
           Copy-Item $jar.FullName "$env:JAR_DST" -Force
 
-          # Node: copia dist/ se existir; senão copia a pasta inteira de javascript
+          # --------- Node ---------
           function Invoke-Robo($src,$dst) {
             robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP
             $rc = $LASTEXITCODE
@@ -129,11 +129,18 @@ jobs:
             Invoke-Robo $nodeSrc $env:NODE_DIR
           }
 
-          # .env opcional do repo (se existir)
+          # --------- .env (se existir no repo) ---------
           $envSrc = "${{ steps.detect.outputs.envFile }}"
           if (Test-Path $envSrc) {
             Copy-Item $envSrc (Join-Path $env:NODE_DIR '.env') -Force
           }
+
+          # --------- package-lock.json (sempre copiar se existir) ---------
+          $lockFile = (Join-Path $nodeSrc 'package-lock.json')
+          if (Test-Path $lockFile) {
+            Copy-Item $lockFile (Join-Path $env:NODE_DIR 'package-lock.json') -Force
+          }
+      
 
       # 7) (Opcional) recriar arquivos sensíveis via secrets
       #    Descomente se quiser manter fora do repo:
