@@ -1,141 +1,210 @@
-name: CI‑CD Joana (runner interativo)
+name: CI-CD Joana (Windows self-hosted)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
+
+concurrency:
+  group: deploy-joana
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: [ self-hosted, windows ]
+    runs-on: [self-hosted, windows]
+    permissions:
+      contents: read
+
+    env:
+      APP_ROOT: C:\Apps\Joana
+      NODE_DST: C:\Apps\Joana\js
+      JAR_DST:  C:\Apps\Joana\joana.jar
 
     steps:
       #################################################################
-      # 0. JAVA_HOME + PATH (JDK 21)                                  #
+      # 0. Checkout                                                   #
       #################################################################
-      - name: Set JAVA_HOME + PATH
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      #################################################################
+      # 1. Setup Java 21 (Temurin) + cache Maven                      #
+      #################################################################
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      #################################################################
+      # 2. Descobrir pastas do Node (main/javascript OU src/main/...) #
+      #################################################################
+      - name: Descobrir pastas do Node
+        id: paths
         shell: powershell
         run: |
-          Add-Content $env:GITHUB_ENV "JAVA_HOME=C:\Program Files\Java\jdk-21"
-          Add-Content $env:GITHUB_ENV "PATH=C:\Program Files\Java\jdk-21\bin;$env:PATH"
+          $p1 = Join-Path $env:GITHUB_WORKSPACE 'main\javascript'
+          $p2 = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
+
+          if (Test-Path $p1) { $nodeSrc = $p1 }
+          elseif (Test-Path $p2) { $nodeSrc = $p2 }
+          else {
+            Write-Error "Não encontrei pasta main\\javascript nem src\\main\\javascript."
+            exit 1
+          }
+
+          "nodeSrc=$nodeSrc"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "pkgJson=$(Join-Path $nodeSrc 'package.json')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "pkgLock=$(Join-Path $nodeSrc 'package-lock.json')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "distDir=$(Join-Path $nodeSrc 'dist')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "envFile=$(Join-Path $nodeSrc '.env')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       #################################################################
-      # 1. Checkout                                                   #
+      # 3. Setup Node 18 + cache npm                                  #
       #################################################################
-      - uses: actions/checkout@v4
+      - name: Setup Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+          # Tenta cachear lockfile, se existir (ambos caminhos)
+          cache-dependency-path: |
+            main/javascript/package-lock.json
+            src/main/javascript/package-lock.json
+
+      - name: Instalar dependências Node
+        if: ${{ hashFiles(steps.paths.outputs.pkgJson) != '' }}
+        shell: powershell
+        working-directory: ${{ steps.paths.outputs.nodeSrc }}
+        run: |
+          if (Test-Path "${{ steps.paths.outputs.pkgLock }}") {
+            npm ci --no-audit --no-fund
+          } else {
+            npm install --no-audit --no-fund --prefer-offline
+          }
+
+      - name: Build front-end (se existir script)
+        if: ${{ hashFiles(steps.paths.outputs.pkgJson) != '' }}
+        shell: powershell
+        working-directory: ${{ steps.paths.outputs.nodeSrc }}
+        run: npm run build --if-present
 
       #################################################################
-      # 2. Finaliza instâncias antigas                                #
+      # 4. Encerrar instâncias antigas                                #
       #################################################################
       - name: Encerrar Node + Java antigos
         shell: powershell
         run: |
+          $ErrorActionPreference = 'SilentlyContinue'
+
+          # Fecha Node que esteja rodando index.js na pasta de produção
           Get-CimInstance Win32_Process |
-            Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'index\.js' } |
+            Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match '\\js\\index\.js' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+          # Fecha java -jar joana.jar
           Get-CimInstance Win32_Process |
             Where-Object { $_.Name -eq 'java.exe' -and $_.CommandLine -match 'joana\.jar' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
       #################################################################
-      # 3. Node 18 (sem cache de node_modules)                        #
+      # 5. Build Java (empacota recursos no JAR)                      #
       #################################################################
-      - uses: actions/setup-node@v4        # só cacheia o diretório npm, não o node_modules
-        with:
-          node-version: 18
-          cache: npm
-          cache-dependency-path: src/main/javascript/package-lock.json
-
-      - name: Instalar dependências Node
-        working-directory: src/main/javascript
-        run: npm install --no-audit --no-fund --prefer-offline
-
-      - name: Build front‑end (opcional)
-        working-directory: src/main/javascript
-        run: npm run build --if-present
-
-      #################################################################
-      # 4. Build Java / Maven                                         #
-      #################################################################
-      - name: Build joana.jar
+      - name: Build JAR
         shell: powershell
-        run: mvn -B clean package -DskipTests    # resources são empacotados no JAR
+        run: mvn -B -DskipTests clean package
 
       #################################################################
-      # 5. Copiar artefatos p/ C:\Apps\Joana                          #
+      # 6. Copiar artefatos para C:\Apps\Joana                        #
       #################################################################
       - name: Copiar artefatos
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          
-          $prodRoot = 'C:\Apps\Joana'
-          $nodeDst  = Join-Path $prodRoot 'js'
-          $jarDst   = Join-Path $prodRoot 'joana.jar'
-          
-          New-Item -ItemType Directory -Path $nodeDst -Force | Out-Null
-          
-          # ---------- JAR ----------
-          $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter 'joana*.jar' |
+
+          $prodRoot = "$env:APP_ROOT"
+          $nodeDst  = "$env:NODE_DST"
+          $jarDst   = "$env:JAR_DST"
+
+          New-Item -ItemType Directory -Force -Path $prodRoot | Out-Null
+          New-Item -ItemType Directory -Force -Path $nodeDst | Out-Null
+
+          # --------- JAR ----------
+          $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter '*.jar' |
+                 Sort-Object LastWriteTime -Descending |
                  Select-Object -First 1
-          if (-not $jar) { throw 'JAR não encontrado.' }
+          if (-not $jar) { throw 'JAR não encontrado em target/.' }
           Copy-Item $jar.FullName $jarDst -Force
-          
-          # ---------- código JS + node_modules + .env ----------
-          $nodeSrc = Join-Path $env:GITHUB_WORKSPACE 'src\main\javascript'
-          $distDir = Join-Path $nodeSrc 'dist'
-          
-          $rc1 = 0; $rc2 = 0
-          
+
+          # --------- Node ----------
+          $nodeSrc = "${{ steps.paths.outputs.nodeSrc }}"
+          $distDir = "${{ steps.paths.outputs.distDir }}"
+
+          function Invoke-Robo($src,$dst) {
+            robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP
+            $rc = $LASTEXITCODE
+            if ($rc -ge 8) { Write-Error \"robocopy falhou com código $rc\"; exit $rc }
+          }
+
           if (Test-Path $distDir) {
-            robocopy $distDir $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-            $rc1 = $LASTEXITCODE
-            robocopy (Join-Path $nodeSrc 'node_modules') (Join-Path $nodeDst 'node_modules') /MIR /NFL /NDL /NJH /NJS /NP
-            $rc2 = $LASTEXITCODE
+            Invoke-Robo $distDir $nodeDst
+            if (Test-Path (Join-Path $nodeSrc 'node_modules')) {
+              Invoke-Robo (Join-Path $nodeSrc 'node_modules') (Join-Path $nodeDst 'node_modules')
+            }
           } else {
-            robocopy $nodeSrc $nodeDst /MIR /NFL /NDL /NJH /NJS /NP
-            $rc1 = $LASTEXITCODE
+            Invoke-Robo $nodeSrc $nodeDst
           }
-          
-          # garante .env
-          if (Test-Path (Join-Path $nodeSrc '.env')) {
-            Copy-Item (Join-Path $nodeSrc '.env') (Join-Path $nodeDst '.env') -Force
-            Write-Host ".env copiado para pasta js"
+
+          # .env: copia se existir no repo; senão mantém o atual (se houver)
+          $envSrc = "${{ steps.paths.outputs.envFile }}"
+          if (Test-Path $envSrc) {
+            Copy-Item $envSrc (Join-Path $nodeDst '.env') -Force
           }
-          
-          $rcMax = [Math]::Max($rc1,$rc2)
-          if ($rcMax -ge 8) { exit $rcMax } else { exit 0 }
 
       #################################################################
-      # 6. Inicia Node + Spring em janelas interativas                #
+      # 7. Iniciar Node + Java                                        #
       #################################################################
-      - name: Iniciar Joana Node + Java (consoles)
+      - name: Iniciar processos (Node e Java)
         shell: powershell
         run: |
-          $prodRoot = 'C:\Apps\Joana'
-          $nodeDir  = Join-Path $prodRoot 'js'
-          $envFile  = Join-Path $nodeDir '.env'
-          
-          # carrega .env no ambiente do processo atual
+          $prodRoot = "$env:APP_ROOT"
+          $nodeDir  = "$env:NODE_DST"
+
+          # Carrega .env (se houver) para este processo (só para o teste de start)
+          $envFile = Join-Path $nodeDir '.env'
           if (Test-Path $envFile) {
             Get-Content $envFile | ForEach-Object {
               if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*)\s*$') {
-                [System.Environment]::SetEnvironmentVariable(
-                  $matches[1].Trim(),
-                  $matches[2].Trim('" '),
-                  'Process')
+                [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim('"" '), 'Process')
               }
             }
           }
-          
-          # janela Node
-          Start-Process cmd.exe -WindowStyle Normal `
-            -ArgumentList '/k node -r dotenv/config index.js ^& pause' `
-            -WorkingDirectory $nodeDir
-          
-          # janela Java
-          Start-Process cmd.exe -WindowStyle Normal `
-            -ArgumentList '/k java -jar joana.jar ^& pause' `
-            -WorkingDirectory $prodRoot
-          
-          exit 0
+
+          # Start Node
+          $nodeExe = (Get-Command node).Source
+          $nodeArgs = '-r', 'dotenv/config', 'index.js'
+          Start-Process -FilePath $nodeExe -ArgumentList $nodeArgs -WorkingDirectory $nodeDir
+
+          # Start Java
+          $javaExe = (Get-Command java).Source
+          Start-Process -FilePath $javaExe -ArgumentList @('-jar','joana.jar') -WorkingDirectory $prodRoot
+
+      #################################################################
+      # 8. Smoke test (opcional)                                      #
+      #################################################################
+      - name: Smoke test (ping do webhook)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Start-Sleep -Seconds 5
+          try {
+            # Ajuste a URL se necessário:
+            $res = Invoke-WebRequest -UseBasicParsing -Method POST `
+              -Uri 'http://localhost:8080/api/webhook' `
+              -Body (@{ text = 'ping'; from = 'ci@local' } | ConvertTo-Json) `
+              -ContentType 'application/json' -TimeoutSec 10
+            Write-Host \"Webhook HTTP $($res.StatusCode)\"
+          } catch {
+            Write-Warning \"Smoke test falhou: $($_.Exception.Message)\"
+          }

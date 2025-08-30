@@ -7,7 +7,8 @@ require('dotenv').config();
 const userQueues = new Map();
 const DELAY_BETWEEN_MESSAGES = 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const WEBHOOK_TIMEOUT = 10000;
+
+const WEBHOOK_TIMEOUT = Number(process.env.WEBHOOK_TIMEOUT ?? 60000);
 
 function getQueue(userId) {
     if (!userQueues.has(userId)) {
@@ -79,6 +80,10 @@ async function handleText(client, from, text, message) {
         return await client.sendMessage(from, { text: reply });
     } catch (err) {
         console.error('❌ Erro ao comunicar com o webhook:', err.message);
+        // If the request timed out, don't immediately send an error message.
+        if (err.code === 'ECONNABORTED' || /timeout/i.test(err.message)) {
+            return;
+        }
         message.handled = true;
         return await client.sendMessage(from, {
             text: 'Erro ao processar sua mensagem. Tente novamente mais tarde!'
