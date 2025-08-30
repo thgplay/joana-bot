@@ -1,3 +1,4 @@
+// index.js
 const express = require('express');
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const {
@@ -6,10 +7,46 @@ const {
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode-terminal');
+const qrcodeTerminal = require('qrcode-terminal'); // imprime no console
+const QR = require('qrcode');                      // gera PNG
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
+require('dotenv').config();
+
 const { handleIncomingMessage } = require('./services/messageService');
 
-const API_PATH = '/api/enviar-mensagem';   // ✅ hífen ASCII (0x2D)
+const API_PATH = '/api/enviar-mensagem'; // ✅ hífen ASCII (0x2D)
+const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs'); // ex.: C:\Apps\Joana\logs
+const AUTH_DIR = process.env.AUTH_DIR || 'auth_info';                    // persistência do login
+
+// helpers
+function ensureDirSync(p) {
+  try { fs.mkdirSync(p, { recursive: true }); } catch {}
+}
+
+async function saveQr(qr) {
+  ensureDirSync(LOG_DIR);
+  const pngPath = path.join(LOG_DIR, 'whatsapp-qr.png');
+  const txtPath = path.join(LOG_DIR, 'whatsapp-qr.txt');
+
+  await fsp.writeFile(txtPath, qr, 'utf8');
+  await QR.toFile(pngPath, qr, { margin: 1, scale: 8 });
+
+  // imprime no terminal quando houver (útil em execução interativa)
+  try { qrcodeTerminal.generate(qr, { small: true }); } catch {}
+
+  console.log(`🔐 QR atualizado:`);
+  console.log(`   • PNG: ${pngPath}`);
+  console.log(`   • TXT: ${txtPath}`);
+}
+
+process.on('unhandledRejection', (err) => {
+  console.error('❌ UnhandledRejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('❌ UncaughtException:', err);
+});
 
 const app = express();
 app.use(express.json());
@@ -35,7 +72,7 @@ function startApi() {
     }
   });
 
-  /* suba a API primeiro — mesmo que o WhatsApp demore a logar  */
+  // suba a API primeiro — mesmo que o WhatsApp demore a logar
   app.listen(3000, '0.0.0.0', () =>
       console.log(`🚀 API externa ativa: http://localhost:3000${API_PATH}`)
   );
@@ -43,40 +80,47 @@ function startApi() {
 
 /* --------------------- WhatsApp bot --------------------- */
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+  ensureDirSync(LOG_DIR);
+  ensureDirSync(AUTH_DIR);
+
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version, isLatest } = await fetchLatestBaileysVersion();
   console.log(`🟢 Usando versão do WhatsApp: ${version}, mais recente? ${isLatest}`);
 
   sock = makeWASocket({
     auth: state,
     version,
-    printQRInTerminal: false,
+    printQRInTerminal: false, // nós controlamos a impressão/log do QR
     getMessage: async () => ({ conversation: 'fallback' }),
     browser: ['Joana', 'Ubuntu', '22.04']
+    // Dica: para logs verbosos do Baileys, rode com DEBUG=baileys:* no ambiente
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      console.log('🔐 Escaneie o QR Code:');
-      qrcode.generate(qr, { small: true });
-    }
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    try {
+      if (qr) {
+        await saveQr(qr);
+      }
 
-    if (connection === 'close') {
-      const shouldReconnect =
-          new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('🔁 Reconectando...', { shouldReconnect });
-      if (shouldReconnect) startBot();
-    } else if (connection === 'open') {
-      console.log('✅ Bot conectado!');
+      if (connection === 'close') {
+        const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        console.log(`🔁 Conexão fechada. status=${statusCode} | shouldReconnect=${shouldReconnect}`);
+        if (shouldReconnect) startBot();
+      } else if (connection === 'open') {
+        console.log('✅ Bot conectado!');
+      }
+    } catch (e) {
+      console.error('❌ Erro no connection.update:', e);
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
-    const msg = messages[0];
+    const msg = messages?.[0];
     if (!msg || !msg.message || msg.key.fromMe) return;
 
     const from = msg.key.remoteJid;
@@ -105,9 +149,8 @@ async function startBot() {
     } catch (err) {
       console.error('❌ Erro ao processar mensagem:', err);
     }
-
   });
 }
 
-startApi();   // 🚨 primeiro a API
+startApi(); // 🚨 primeiro a API
 startBot();
