@@ -34,17 +34,12 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Rodando como: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-
           $gitResolved = $false
-
-          # Tenta direto
           try {
             $gitPath = (Get-Command git -ErrorAction Stop).Source
             $gitResolved = $true
             Write-Host "git encontrado no PATH: $gitPath"
           } catch {}
-
-          # Se não achou, injeta caminhos mais comuns e tenta de novo
           if (-not $gitResolved) {
             $candidatos = @(
               'C:\Program Files\Git\cmd',
@@ -52,44 +47,14 @@ jobs:
               'C:\Program Files (x86)\Git\cmd',
               'C:\Program Files (x86)\Git\bin'
             )
-            foreach ($p in $candidatos) {
-              if (Test-Path $p) { Add-Content $env:GITHUB_PATH $p }
-            }
+            foreach ($p in $candidatos) { if (Test-Path $p) { Add-Content $env:GITHUB_PATH $p } }
             try {
               $gitPath = (Get-Command git -ErrorAction Stop).Source
               $gitResolved = $true
               Write-Host "git encontrado após injetar PATH: $gitPath"
             } catch {}
           }
-
-          # Como último recurso, tenta pegar InstallPath do Registro
-          if (-not $gitResolved) {
-            $regKeys = @(
-              'HKLM:\SOFTWARE\GitForWindows',
-              'HKLM:\SOFTWARE\WOW6432Node\GitForWindows'
-            )
-            foreach ($rk in $regKeys) {
-              if (Test-Path $rk) {
-                $ip = (Get-ItemProperty $rk -ErrorAction SilentlyContinue).InstallPath
-                if ($ip -and (Test-Path $ip)) {
-                  foreach ($p in @('cmd','bin','mingw64\bin','usr\bin')) {
-                    $pp = Join-Path $ip $p
-                    if (Test-Path $pp) { Add-Content $env:GITHUB_PATH $pp }
-                  }
-                }
-              }
-            }
-            try {
-              $gitPath = (Get-Command git -ErrorAction Stop).Source
-              $gitResolved = $true
-              Write-Host "git encontrado via Registro: $gitPath"
-            } catch {}
-          }
-
-          if (-not $gitResolved) {
-            throw "git.exe não encontrado no PATH do serviço. Instale o Git for Windows ou ajuste os caminhos."
-          }
-
+          if (-not $gitResolved) { throw "git.exe não encontrado. Instale Git for Windows." }
           git --version
           "GIT_EXE=$gitPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -117,36 +82,61 @@ jobs:
           "distDir=$(Join-Path $nodeSrc 'dist')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "envFile=$(Join-Path $nodeSrc '.env')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      # 3) Node 18 + cache npm
-      - name: Setup Node 18
+      # 3) Node 22 LTS + cache npm
+      - name: Setup Node 22 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             main/javascript/package-lock.json
             src/main/javascript/package-lock.json
 
-      # 3.1) Agora sim: apontar o npm para o git absoluto (fallback)
-      - name: Apontar npm para o git (fallback)
+      - name: Mostrar versões Node/npm do job
         shell: powershell
         run: |
-          $npm = (Get-Command npm -ErrorAction Stop).Source
-          Write-Host "npm: $npm"
-          $git = "${{ steps.git.outputs.GIT_EXE }}"
-          if (-not $git) { $git = (Get-Command git -ErrorAction Stop).Source }
-          npm config set git "`"$git`""
-          npm config get git
+          node -v
+          npm -v
 
-      - name: Instalar deps Node
+      # 3.1) Limpar node_modules (Windows EPERM fix)
+      - name: Limpar node_modules (Windows fix)
         if: ${{ hashFiles(steps.detect.outputs.pkgJson) != '' }}
         shell: powershell
         working-directory: ${{ steps.detect.outputs.nodeSrc }}
         run: |
-          if (Test-Path "${{ steps.detect.outputs.pkgLock }}") {
-            npm ci --no-audit --no-fund
+          if (Test-Path 'node_modules') {
+            Write-Host "Removendo node_modules com retry..."
+            for ($i=0; $i -lt 5; $i++) {
+              try { Remove-Item -LiteralPath 'node_modules' -Recurse -Force -ErrorAction Stop; break }
+              catch { Start-Sleep -Seconds 2 }
+            }
+            if (Test-Path 'node_modules') {
+              Write-Host "Tentando via cmd /C rmdir..."
+              cmd /c rmdir /S /Q node_modules
+            }
+          }
+
+      # 3.2) Instalar deps Node (ci com fallback p/ install)
+      - name: Instalar deps Node (ci com fallback)
+        if: ${{ hashFiles(steps.detect.outputs.pkgJson) != '' }}
+        shell: powershell
+        working-directory: ${{ steps.detect.outputs.nodeSrc }}
+        run: |
+          $ErrorActionPreference = 'SilentlyContinue'
+          $hasLock = Test-Path "${{ steps.detect.outputs.pkgLock }}"
+          if ($hasLock) {
+            Write-Host "🟦 Tentando npm ci (lock encontrado)..."
+            & npm ci --no-audit --no-fund
+            $rc = $LASTEXITCODE
+            if ($rc -ne 0) {
+              Write-Warning "⚠️ npm ci falhou (lock possivelmente desatualizado). Fallback para npm install..."
+              & npm install --no-audit --no-fund --prefer-offline
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
           } else {
-            npm install --no-audit --no-fund --prefer-offline
+            Write-Host "🟩 Sem lockfile — usando npm install."
+            & npm install --no-audit --no-fund --prefer-offline
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
       - name: Build front-end (se existir)
@@ -229,7 +219,7 @@ jobs:
       #       Set-Content -Path "$env:APP_ROOT\prompt_joana.txt" -Value "${{ secrets.PROMPT_JOANA }}"
       #     }
 
-      # 8) NSSM restart serviços
+      # 8) NSSM: garantir Node 22 no runtime e reiniciar serviços
       - name: (NSSM) Garantir e reiniciar serviços
         shell: powershell
         run: |
@@ -237,8 +227,17 @@ jobs:
           if (-not (Test-Path $env:NSSM_EXE)) {
             throw "NSSM não encontrado em $env:NSSM_EXE."
           }
-          $nodeExe = (Get-Command node).Source
+
+          # >>> aponte explicitamente para o Node 22 instalado na VPS:
+          $nodeExe = 'C:\Program Files\nodejs\node.exe'
+          if (-not (Test-Path $nodeExe)) {
+            throw "Node 22 não encontrado em $nodeExe. Instale Node 22 LTS na VPS."
+          }
+          $nodeVer = & "$nodeExe" -v
+          Write-Host "Node runtime (serviço): $nodeVer"
+
           $javaExe = (Get-Command java).Source
+
           function Ensure-Service($name, $app, $dir, $params) {
             $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
             if (-not $svc) {
@@ -252,8 +251,20 @@ jobs:
               & $env:NSSM_EXE set $name Start SERVICE_AUTO_START
             }
           }
-          Ensure-Service $env:SVC_NODE $nodeExe $env:NODE_DIR "-r dotenv/config index.js"
-          Ensure-Service $env:SVC_JAVA $javaExe $env:APP_ROOT "-jar joana.jar"
+
+          Ensure-Service $env:SVC_NODE "$nodeExe" $env:NODE_DIR "-r dotenv/config index.js"
+          Ensure-Service $env:SVC_JAVA "$javaExe" $env:APP_ROOT "-jar joana.jar"
+
+          # (opcional) logs do serviço Node
+          New-Item -ItemType Directory -Force -Path "$env:APP_ROOT\logs" | Out-Null
+          & $env:NSSM_EXE set $env:SVC_NODE AppStdout "$env:APP_ROOT\logs\joana-node.out.log"
+          & $env:NSSM_EXE set $env:SVC_NODE AppStderr "$env:APP_ROOT\logs\joana-node.err.log"
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateFiles 1
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateBytes 10485760
+          & $env:NSSM_EXE set $env:SVC_NODE AppRotateDelay 86400
+          & $env:NSSM_EXE set $env:SVC_NODE AppEnvironmentExtra "LOG_DIR=$env:APP_ROOT\logs","AUTH_DIR=$env:NODE_DIR\auth_info","DEBUG=baileys:*"
+
+          # Restart
           & $env:NSSM_EXE stop  $env:SVC_NODE  ; Start-Sleep -Seconds 1
           & $env:NSSM_EXE start $env:SVC_NODE
           & $env:NSSM_EXE stop  $env:SVC_JAVA  ; Start-Sleep -Seconds 1
