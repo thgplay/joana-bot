@@ -170,18 +170,33 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:APP_ROOT" | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:NODE_DIR" | Out-Null
 
-          # JAR
+          # --------- JAR ---------
           $jar = Get-ChildItem "$env:GITHUB_WORKSPACE\target" -Filter '*.jar' |
                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $jar) { throw 'JAR não encontrado em target/.' }
           Copy-Item $jar.FullName "$env:JAR_DST" -Force
 
-          # Node
+          # --------- Função Robocopy com exclusões + normalização do RC ---------
           function Invoke-Robo($src,$dst) {
-            robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP
+            # Exclusões:
+            #  - arquivos: .env, prompt_joana.txt, application.properties
+            #  - pastas : auth_info (login), logs (seus logs), whatsapp cache, etc
+            $args = @(
+              $src, $dst, '/MIR',
+              '/NFL','/NDL','/NJH','/NJS','/NP',
+              '/R:2','/W:2','/FFT',
+              '/XF', '.env', 'prompt_joana.txt', 'application.properties', 'whatsapp-qr.png', 'whatsapp-qr.txt', 'package-lock.json',
+              '/XD', 'auth_info', 'logs', '.cache', '.tmp'
+            )
+            cmd /c robocopy @args
             $rc = $LASTEXITCODE
+            # Robocopy: 0–7 = sucesso; >=8 = erro
             if ($rc -ge 8) { Write-Error "robocopy falhou com código $rc"; exit $rc }
+            # Zera para o job não falhar em RC=1 (EXTRA/MISMATCH)
+            $global:LASTEXITCODE = 0
           }
+
+          # --------- Node: copie dist/ se existir; senão, a pasta inteira do JS ---------
           $nodeSrc = "${{ steps.detect.outputs.nodeSrc }}"
           $distDir = "${{ steps.detect.outputs.distDir }}"
           if (Test-Path $distDir) {
@@ -193,17 +208,17 @@ jobs:
             Invoke-Robo $nodeSrc $env:NODE_DIR
           }
 
-          # .env (se existir)
-          $envSrc = "${{ steps.detect.outputs.envFile }}"
-          if (Test-Path $envSrc) {
-            Copy-Item $envSrc (Join-Path $env:NODE_DIR '.env') -Force
-          }
+          # --------- .env: NÃO sobrescrever; só copie se quiser substituir explicitamente ---------
+          # if (Test-Path (Join-Path $nodeSrc '.env')) {
+          #   Copy-Item (Join-Path $nodeSrc '.env') (Join-Path $env:NODE_DIR '.env') -Force
+          # }
 
-          # package-lock.json (se existir)
+          # --------- package-lock.json (copiar ao final se existir no repo) ---------
           $lockFile = (Join-Path $nodeSrc 'package-lock.json')
           if (Test-Path $lockFile) {
             Copy-Item $lockFile (Join-Path $env:NODE_DIR 'package-lock.json') -Force
           }
+      
 
       # 7) (opcional) criar arquivos sensíveis via secrets
       # - name: Criar application.properties
