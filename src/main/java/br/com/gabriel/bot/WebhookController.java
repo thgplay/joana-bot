@@ -5,11 +5,15 @@ import br.com.gabriel.bot.repository.ChatHistoryRepository;
 import br.com.gabriel.bot.services.OpenAiService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,8 +29,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RequestMapping("/api")
 public class WebhookController {
 
-    private final Map<String, Instant> delayControlMap = new ConcurrentHashMap<>();
-    private static final Duration DELAY = Duration.ofSeconds(3);
+    private static final Logger logger = LoggerFactory.getLogger(WebhookController.class);
+
+    private static final long DELAY_MS = 3000L;
+
+    private final ConcurrentHashMap<String, Long> lastSeen = new ConcurrentHashMap<>();
 
     private final OpenAiService openAiService;
     private final ChatHistoryRepository historyRepository;
@@ -39,42 +46,48 @@ public class WebhookController {
     @PostMapping("/webhook")
     @Async
     public CompletableFuture<ResponseEntity<Map<String, String>>> handleMessage(@RequestBody Map<String, String> payload) {
-        System.out.println("📥 Requisição recebida no /webhook:");
-        System.out.println(payload);
+        logger.info("Requisição recebida no /webhook: {}", payload);
 
         String message = payload.get("text");
-        String sender = payload.get("from");
+        String sender  = payload.get("from");
 
         if (sender == null || sender.isBlank()) {
-            System.out.println("❌ Erro: Payload sem campo 'from'. Ignorando.");
-            
+            logger.warn("Payload sem campo 'from'. Ignorando.");
             return CompletableFuture.completedFuture(
                     ResponseEntity.badRequest().body(Map.of("reply", "❌ Erro: usuário não identificado."))
             );
         }
 
         if (message == null || message.trim().isEmpty()) {
-            System.out.println("⚠️ Mensagem sem texto enviada por: " + sender);
+            logger.warn("Mensagem sem texto enviada por: {}", sender);
             return CompletableFuture.completedFuture(
                     ResponseEntity.ok(Map.of("reply", "Desculpe, não consegui entender sua mensagem. Poderia repetir ou dizer quais ingredientes você tem? 🥺"))
             );
         }
 
         message = message.trim();
-        System.out.println("✅ Mensagem de texto válida de " + sender + ": " + message);
+        logger.info("Mensagem de texto válida de {}: {}", sender, message);
 
-        // Controle antispam
-        synchronized (delayControlMap.computeIfAbsent(sender, k -> Instant.EPOCH)) {
-            Instant agora = Instant.now();
-            Instant ultimo = delayControlMap.get(sender);
+        /* ---------- ANTISPAM ATÔMICO ---------- */
+        long now = System.currentTimeMillis();
+        final boolean[] allowed = {false};
 
-            if (ultimo != null && Duration.between(ultimo, agora).compareTo(DELAY) < 0) {
-                System.out.println("⏳ Ignorando requisição por spam do usuário: " + sender);
-                return CompletableFuture.completedFuture(ResponseEntity.noContent().build());
+        lastSeen.compute(sender, (k, prev) -> {
+            if (prev == null || (now - prev) >= DELAY_MS) {
+                allowed[0] = true;   // libera processamento
+                return now;          // atualiza timestamp
+            } else {
+                allowed[0] = false;  // ainda dentro da janela -> bloquear
+                return prev;         // mantém timestamp anterior
             }
+        });
 
-            delayControlMap.put(sender, agora);
+        if (!allowed[0]) {
+            logger.warn("Antispam: ignorando requisição de {} ({} ms desde a última).", sender, now - lastSeen.get(sender));
+            // 204: silencioso; o Node não envia fallback
+            return CompletableFuture.completedFuture(ResponseEntity.noContent().build());
         }
+        /* -------------------------------------- */
 
         // Obter ou criar histórico
         ChatHistory history = historyRepository.findByUserIdWithHistory(sender).orElseGet(() -> {
@@ -83,10 +96,10 @@ public class WebhookController {
             return novo;
         });
 
-        // Detectar nome se possível
+        // Detectar nome, se possível
         String nomeDetectado = extrairNome(message);
         if (nomeDetectado != null && !nomeDetectado.isBlank()) {
-            System.out.println("🙋 Nome detectado: " + nomeDetectado);
+            logger.info("Nome detectado: {}", nomeDetectado);
             history.setNome(nomeDetectado);
         }
 
@@ -97,28 +110,28 @@ public class WebhookController {
             last10 = last10.subList(last10.size() - 10, last10.size());
         }
 
-        System.out.println("📤 Enviando mensagem para OpenAI com os últimos " + last10.size() + " registros...");
+        logger.info("Enviando mensagem para OpenAI com os últimos {} registros...", last10.size());
 
         return openAiService.ask(sender, history.getNome(), last10, message)
                 .thenApply(reply -> {
-                    System.out.println("📥 Resposta da IA recebida:");
-
+                    logger.info("Resposta da IA recebida");
                     if (reply == null || reply.isBlank()) {
-                        System.out.println("⚠️ Resposta da IA foi nula ou vazia.");
+                        logger.warn("Resposta da IA foi nula ou vazia.");
                         reply = "Desculpe, não consegui encontrar uma receita com essas informações. Pode tentar de outro jeito? 😊";
                     } else {
-                        System.out.println("🧠 Resposta: " + reply);
+                        logger.info("Resposta: {}", reply);
                     }
-
                     history.getHistory().add("Assistente: " + reply);
                     historyRepository.save(history);
-
                     return ResponseEntity.ok(Map.of("reply", reply));
                 })
                 .exceptionally(ex -> {
-                    System.out.println("❌ Erro ao processar resposta da IA:");
-                    ex.printStackTrace();
-                    return ResponseEntity.status(500).body(Map.of("reply", "❌ Erro ao gerar resposta da IA."));
+                    logger.error("Erro ao processar resposta da IA", ex);
+                    String messageErro = ex.getMessage();
+                    String cause = (messageErro != null && !messageErro.isBlank()) ? messageErro : ex.getClass().getSimpleName();
+                    return ResponseEntity.status(500).body(
+                            Map.of("reply", "❌ Erro ao gerar resposta da IA: " + cause)
+                    );
                 });
     }
 
